@@ -12,8 +12,8 @@ LEDPanel::LEDPanel(int toto) {
   mxconfig.gpio.e = 32;
   mxconfig.clkphase = false;
   mxconfig.driver = HUB75_I2S_CFG::FM6126A;
-  mxconfig.latch_blanking = 4;
-  mxconfig.i2sspeed = HUB75_I2S_CFG::HZ_10M;
+  //mxconfig.latch_blanking = 4;
+  mxconfig.i2sspeed = HUB75_I2S_CFG::HZ_20M;
 
   // Display Setup
   this->dma_display = new MatrixPanel_I2S_DMA(mxconfig);
@@ -21,12 +21,12 @@ LEDPanel::LEDPanel(int toto) {
 }
 
 void LEDPanel::setup() {
-  dma_display->setBrightness8(30);  //0-255
+  dma_display->setBrightness8(10);  //0-255
   //dma_display->setBrightness8(255);  //0-255
   dma_display->clearScreen();
   dma_display->fillScreen(Colors::black(dma_display));
 }
 
 void LEDPanel::loop() {
-
+  //dma_display->clearScreen();
 }
