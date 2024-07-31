@@ -17,7 +17,8 @@ void Bitmap::loop() {
 
 void Bitmap::downloadAndDisplayImage() {
 
-  String imageUrl = "http://sebastienblondy.com/images/fez.bmp";
+  //String imageUrl = "http://sebastienblondy.com/images/fez.bmp";
+  String imageUrl = "http://192.168.1.208:8080/images/http%3A%2F%2F192.168.1.229%2Fsnapshot.jpg?convertTo=bitmap&width=64&height=64";
 
   HTTPClient http;
   http.begin(imageUrl);
@@ -27,7 +28,7 @@ void Bitmap::downloadAndDisplayImage() {
       int len = http.getSize();
 
       // create buffer for read
-      uint8_t buff[3] = { 0 };
+      uint8_t buff[3 * SCREEN_WIDTH] = { 0 };
 
       // get tcp stream
       WiFiClient *stream = http.getStreamPtr();
@@ -39,34 +40,30 @@ void Bitmap::downloadAndDisplayImage() {
       }
 
       for (int y = 0; y < SCREEN_HEIGHT; y++) {
+
+        int retries = 0;
+        while (stream->available() < sizeof(buff) && retries < 20) {
+          Serial.print(stream->available());
+          Serial.println("B");
+          retries++;
+        }
+        stream->readBytes(buff, sizeof(buff));
+
         for (int x = 0; x < SCREEN_WIDTH; x++) {
-          /*while(stream->available()<sizeof(buff)){
-            delay(1);
-          }*/
-          size_t size = stream->available();
-          if (true) {
-            //if (size) {
-            int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-            if (len > 0) {
-              len -= c;
-            }
+          uint8_t r = buff[x * 3 + 2];
+          uint8_t g = buff[x * 3 + 1];
+          uint8_t b = buff[x * 3 + 0];
 
-            uint8_t r = buff[2];
-            uint8_t g = buff[1];
-            uint8_t b = buff[0];
-
-            this->ledPanel->dma_display->drawPixel(
-              SCREEN_WIDTH - 1 - x,
-              SCREEN_HEIGHT - 1 - y,
-              Colors::rgb(this->ledPanel->dma_display, r, g, b));
-          }
+          this->ledPanel->dma_display->drawPixel(
+            x,
+            y,
+            Colors::rgb(this->ledPanel->dma_display, r, g, b));
         }
       }
     }
   } else {
+    Serial.println(httpCode);
   }
-
-  Serial.println("");
 
   http.end();
 }

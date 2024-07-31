@@ -4,12 +4,15 @@
 #include "colors.h"
 #include "clock.h"
 #include "ripples.h"
+#include "dashboard.h"
 #include "bitmap.h"
 #include "brightness.h"
+#include "buzzer.h"
 
 LEDPanel ledPanel(8);
 Clock myClock(&ledPanel);
 Ripples ripples(&ledPanel);
+Dashboard dashboard(&ledPanel);
 Bitmap bitmap(&ledPanel);
 Brightness brightness(&ledPanel);
 
@@ -21,8 +24,10 @@ void setup() {
   ledPanel.setup();
   //ripples.setup();
   //myClock.setup();
-  bitmap.setup();
+  //bitmap.setup();
+  dashboard.setup();
   brightness.setup();
+  Buzzer::setup();
 }
 
 void loop() {
@@ -33,5 +38,7 @@ void loop() {
   brightness.loop();
   //ripples.loop();
   //myClock.loop();
-  bitmap.loop();
+  //bitmap.loop();
+  dashboard.loop();
+  Buzzer::loop();
 }
