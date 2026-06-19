@@ -73,10 +73,12 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
   String url;
   url += F("http://");
   url += SECRET_HOME_ASSISTANT_HOST;
-  url += F("/api/history/start_date=");
+  url += F("/api/history/period/");
   url += getTimestamp(hoursBack);
-  url += F("&entity_id=");
+  url += F("?filter_entity_id=");
   url += entityName;
+  url += F("&end_time=");
+  url += getTimestamp(0);
 
   Serial.printf("[ha] url=%s\n", url.c_str());
 
@@ -112,14 +114,14 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
     return 0;
   }
 
-  JsonArray array = doc.as<JsonArray>();
+  JsonArray result = doc["result"].as<JsonArray>();
   int count = 0;
   
-  for (JsonObject item : array) {
+  for (JsonObject period : result) {
     if (count >= maxPoints) break;
     
-    JsonArray stateHistory = item["state_history"].as<JsonArray>();
-    for (JsonObject state : stateHistory) {
+    JsonArray states = period["states"].as<JsonArray>();
+    for (JsonObject state : states) {
       if (count >= maxPoints) break;
       
       HistoryPoint p;
