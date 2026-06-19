@@ -34,25 +34,24 @@ static uint16_t addColors565(uint16_t c1, uint16_t c2) {
 void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
                            int n, float tMin, float tMax,
                            uint16_t etageColor, uint16_t extColor) {
-  uint16_t dimEtage  = dimColor565(etageColor, 7);
-  uint16_t dimExt    = dimColor565(extColor,   7);
-  uint16_t gridEtage = dimColor565(etageColor, 4);
-  uint16_t gridExt   = dimColor565(extColor,   4);
+  // 3 niveaux : fill de base /7, ligne d'unité /4, ligne de dizaine /2
+  uint16_t dimEtage    = dimColor565(etageColor, 7);
+  uint16_t dimExt      = dimColor565(extColor,   7);
+  uint16_t decadeEtage = dimColor565(etageColor, 2);
+  uint16_t decadeExt   = dimColor565(extColor,   2);
   int bottomY = SCREEN_HEIGHT - 1;
 
-  // Positions Y des lignes de dizaines, calculées sur la hauteur pleine (bottomY=63)
-  // pour pouvoir apparaître dans les 4px du bas sans être bloquées par CURVE_PAD.
-  const int maxDecades = 12;
-  int decadeYs[maxDecades];
-  int numDecades = 0;
+  // Tableau indexé par Y : 0=fill, 1=unité, 2=dizaine.
+  // Y calculé sur bottomY=63 (sans padding bas) pour autoriser les lignes dans les 4px du bas.
+  int8_t gridType[SCREEN_HEIGHT] = {};
   if (!isnan(tMin) && !isnan(tMax) && tMax > tMin) {
-    int firstDecade = (int)floorf(tMin / 10.0f) * 10;
-    int lastDecade  = (int)ceilf(tMax / 10.0f) * 10;
-    for (int dec = firstDecade; dec <= lastDecade && numDecades < maxDecades; dec += 10) {
-      float ratio = (dec - tMin) / (tMax - tMin);
+    int firstTemp = (int)floorf(tMin / 10.0f) * 10;
+    int lastTemp  = (int)ceilf(tMax / 10.0f) * 10;
+    for (int temp = firstTemp; temp <= lastTemp; temp += 10) {
+      float ratio = (temp - tMin) / (tMax - tMin);
       int y = bottomY - (int)(ratio * (bottomY - CURVE_PAD));
       if (y >= CURVE_PAD && y <= bottomY)
-        decadeYs[numDecades++] = y;
+        gridType[y] = 2;
     }
   }
 
@@ -67,13 +66,8 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       bool inExt   = hasExt   && y > yExt;
       if (!inEtage && !inExt) continue;
 
-      bool isGrid = false;
-      for (int d = 0; d < numDecades; d++) {
-        if (decadeYs[d] == y) { isGrid = true; break; }
-      }
-
-      uint16_t ce = isGrid ? gridEtage : dimEtage;
-      uint16_t cx = isGrid ? gridExt   : dimExt;
+      uint16_t ce = (gridType[y] == 2) ? decadeEtage : dimEtage;
+      uint16_t cx = (gridType[y] == 2) ? decadeExt   : dimExt;
 
       if      (inEtage && inExt) this->ledPanel->dma_display->drawPixel(x, y, addColors565(ce, cx));
       else if (inEtage)           this->ledPanel->dma_display->drawPixel(x, y, ce);
@@ -157,7 +151,7 @@ void Dashboard::drawCurrentValues(float etageTemp, float extTemp) {
   disp->setTextSize(1);
   disp->setTextWrap(false);
 
-  const int8_t offsets[4][2] = {{-1,0},{1,0},{0,-1},{0,1}};
+  const int8_t offsets[8][2] = {{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{1,-1},{-1,1},{1,1}};
   for (auto& off : offsets) {
     disp->setCursor(textX + off[0], 1 + off[1]);
     disp->setTextColor(shadowColor);
