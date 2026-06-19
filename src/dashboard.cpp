@@ -62,6 +62,8 @@ void Dashboard::loop() {
   int etageCount = HomeAssistant::getHistory("sensor.temperature_etage", etagePoints, MAX_POINTS, 24);
   Serial.printf("[dash] etage: %d points\n", etageCount);
 
+  delay(1000);
+
   static HistoryPoint extPoints[MAX_POINTS];
   Serial.println("[dash] fetch sensor.domo_ext_rieur...");
   int extCount = HomeAssistant::getHistory("sensor.domo_ext_rieur", extPoints, MAX_POINTS, 24);

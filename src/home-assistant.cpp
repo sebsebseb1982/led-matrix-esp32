@@ -1,5 +1,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <time.h>
+#include <string.h>
 
 #include "common.h"
 #include "secrets.h"
@@ -122,8 +124,21 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
     if (count >= maxPoints) break;
     
     HistoryPoint p;
-    p.ts = (int)state["last_changed_ts"].as<long>();
-    p.value = state["state"].as<float>();
+    
+    String stateStr = state["state"].as<String>();
+    p.value = stateStr.toFloat();
+    
+    String tsStr = state["last_changed"].as<String>();
+    if (tsStr.length() > 0) {
+      struct tm tm_info;
+      memset(&tm_info, 0, sizeof(tm_info));
+      strptime(tsStr.c_str(), "%Y-%m-%dT%H:%M:%S", &tm_info);
+      tm_info.tm_isdst = -1;
+      p.ts = (int)mktime(&tm_info);
+    } else {
+      p.ts = 0;
+    }
+    
     points[count++] = p;
   }
 
