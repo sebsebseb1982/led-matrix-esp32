@@ -85,12 +85,13 @@ void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, uin
   }
 }
 
-// Coche verte 5x5
+// Coche verte 5x4 : bras droit (4,0)->(2,2), pointe (1,3), bras gauche (0,2)->(1,3)
 static void drawCheckmark(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+4, y+0, color);
   disp->drawPixel(x+3, y+1, color);
-  disp->drawPixel(x+2, y+2, color); disp->drawPixel(x+1, y+2, color);
-  disp->drawPixel(x+0, y+3, color);
+  disp->drawPixel(x+2, y+2, color);
+  disp->drawPixel(x+0, y+2, color);
+  disp->drawPixel(x+1, y+3, color);
 }
 
 // Croix rouge 5x5
