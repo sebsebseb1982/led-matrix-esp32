@@ -10,7 +10,8 @@ unsigned long Buzzer::stopBeepMillis = 0;
 unsigned int Buzzer::currentLevel = 0;
 
 void Buzzer::setup() {
-  ledcAttach(BUZZER_PIN, frequence, resolution);
+  ledcSetup(pwmChannel, frequence, resolution);
+  ledcAttachPin(BUZZER_PIN, pwmChannel);
   ledcWrite(pwmChannel, 255);
   //pinMode(BUZZER_PIN, OUTPUT);
   off();
