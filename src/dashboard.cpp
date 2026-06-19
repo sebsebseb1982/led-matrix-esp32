@@ -34,9 +34,27 @@ static uint16_t addColors565(uint16_t c1, uint16_t c2) {
 void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
                            int n, float tMin, float tMax,
                            uint16_t etageColor, uint16_t extColor) {
-  uint16_t dimEtage = dimColor565(etageColor, 7);
-  uint16_t dimExt   = dimColor565(extColor,   7);
+  uint16_t dimEtage  = dimColor565(etageColor, 7);
+  uint16_t dimExt    = dimColor565(extColor,   7);
+  uint16_t gridEtage = dimColor565(etageColor, 4);
+  uint16_t gridExt   = dimColor565(extColor,   4);
   int bottomY = SCREEN_HEIGHT - 1;
+
+  // Positions Y des lignes de dizaines, calculées sur la hauteur pleine (bottomY=63)
+  // pour pouvoir apparaître dans les 4px du bas sans être bloquées par CURVE_PAD.
+  const int maxDecades = 12;
+  int decadeYs[maxDecades];
+  int numDecades = 0;
+  if (!isnan(tMin) && !isnan(tMax) && tMax > tMin) {
+    int firstDecade = (int)floorf(tMin / 10.0f) * 10;
+    int lastDecade  = (int)ceilf(tMax / 10.0f) * 10;
+    for (int dec = firstDecade; dec <= lastDecade && numDecades < maxDecades; dec += 10) {
+      float ratio = (dec - tMin) / (tMax - tMin);
+      int y = bottomY - (int)(ratio * (bottomY - CURVE_PAD));
+      if (y >= CURVE_PAD && y <= bottomY)
+        decadeYs[numDecades++] = y;
+    }
+  }
 
   for (int x = 0; x < n; x++) {
     bool hasEtage = !isnan(etageTemps[x]);
@@ -47,9 +65,19 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
     for (int y = CURVE_PAD; y <= bottomY; y++) {
       bool inEtage = hasEtage && y > yEtage;
       bool inExt   = hasExt   && y > yExt;
-      if      (inEtage && inExt) this->ledPanel->dma_display->drawPixel(x, y, addColors565(dimEtage, dimExt));
-      else if (inEtage)           this->ledPanel->dma_display->drawPixel(x, y, dimEtage);
-      else if (inExt)             this->ledPanel->dma_display->drawPixel(x, y, dimExt);
+      if (!inEtage && !inExt) continue;
+
+      bool isGrid = false;
+      for (int d = 0; d < numDecades; d++) {
+        if (decadeYs[d] == y) { isGrid = true; break; }
+      }
+
+      uint16_t ce = isGrid ? gridEtage : dimEtage;
+      uint16_t cx = isGrid ? gridExt   : dimExt;
+
+      if      (inEtage && inExt) this->ledPanel->dma_display->drawPixel(x, y, addColors565(ce, cx));
+      else if (inEtage)           this->ledPanel->dma_display->drawPixel(x, y, ce);
+      else if (inExt)             this->ledPanel->dma_display->drawPixel(x, y, cx);
     }
   }
 }
