@@ -13,6 +13,7 @@ void Buzzer::setup() {
   ledcAttach(BUZZER_PIN, frequence, resolution);
   ledcWrite(pwmChannel, 255);
   //pinMode(BUZZER_PIN, OUTPUT);
+  off();
 }
 
 void Buzzer::on() {

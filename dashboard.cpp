@@ -1,6 +1,6 @@
 #include "colors.h"
 #include "dashboard.h"
-#include "home-assistant.h"
+#include "data-store.h"
 
 #define houseWidth 50
 #define houseHeight 48
@@ -9,6 +9,7 @@
 #define pixelsShown 34
 #define windowHeight 10
 #define windowWidth 3
+#define refreshDataInSeconds 30
 
 Dashboard::Dashboard(LEDPanel *ledPanel) {
   this->ledPanel = ledPanel;
@@ -18,29 +19,27 @@ void Dashboard::setup() {
 }
 
 void Dashboard::loop() {
-  String temperatureUpstairs = HomeAssistant::getEntityState("sensor.temperature_etage");
-  String temperatureDownstairs = HomeAssistant::getEntityState("sensor.temperature_rez_de_chaussee");
-  String temperatureOutside = HomeAssistant::getEntityState("sensor.domo_ext_rieur");
+  Data data = DataStore::get();
 
   this->ledPanel->dma_display->clearScreen();
   displayTemperature(
     3,
     25,
-    temperatureUpstairs.toFloat(),
+    data.temperatureInsideUpstairs,
     18,
     28);
 
   displayTemperature(
     3,
     48,
-    temperatureDownstairs.toFloat(),
+    data.temperatureInsideDownstairs,
     18,
     28);
 
   displayTemperature(
     38,
     3,
-    temperatureOutside.toFloat(),
+    data.temperatureOutside,
     0,
     34);
 
@@ -48,11 +47,11 @@ void Dashboard::loop() {
   drawWindow(
     pixelsShown - 2,
     SCREEN_HEIGHT - (houseHeight / 4) - (windowHeight / 2) - 1,
-    temperatureDownstairs.toFloat() >= temperatureOutside.toFloat());
+    data.temperatureInsideDownstairs >= data.temperatureOutside);
   drawWindow(
     pixelsShown - 2,
     SCREEN_HEIGHT - ((3 * houseHeight) / 4) - (windowHeight / 2),
-    temperatureUpstairs.toFloat() >= temperatureOutside.toFloat());
+    data.temperatureInsideUpstairs >= data.temperatureOutside);
 
   delay(5000);
 }

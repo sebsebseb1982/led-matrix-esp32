@@ -8,6 +8,8 @@
 #include "bitmap.h"
 #include "brightness.h"
 #include "buzzer.h"
+#include "pir-sensor.h"
+#include "windows-notifier.h"
 
 LEDPanel ledPanel(8);
 Clock myClock(&ledPanel);
@@ -15,6 +17,7 @@ Ripples ripples(&ledPanel);
 Dashboard dashboard(&ledPanel);
 Bitmap bitmap(&ledPanel);
 Brightness brightness(&ledPanel);
+//WindowsNotifier windowsNotifier(&ledPanel);
 
 void setup() {
   Serial.begin(115200);
@@ -28,17 +31,33 @@ void setup() {
   dashboard.setup();
   brightness.setup();
   Buzzer::setup();
+  PIRSensor::setup();
+  //windowsNotifier.setup();
+
+  // Display
+  brightness.loop();
+  dashboard.loop();
+
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, HIGH);
+
+  //Rentre en mode Deep Sleep
+  Serial.println("Rentre en mode Deep Sleep");
+  Serial.println("----------------------");
+  esp_deep_sleep_start();
 }
 
 void loop() {
-  Serial.println("loop()");
+  /*Serial.println("loop()");
   WiFiConnection::loop();
   OTA::loop();
-  ledPanel.loop();
-  brightness.loop();
-  //ripples.loop();
-  //myClock.loop();
-  //bitmap.loop();
-  dashboard.loop();
   Buzzer::loop();
+  ledPanel.loop();
+  windowsNotifier.loop();
+  if (!ledPanel.isStandby()) {
+    brightness.loop();
+    ripples.loop();
+    myClock.loop();
+    bitmap.loop();
+    dashboard.loop();
+  }*/
 }

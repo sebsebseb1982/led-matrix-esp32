@@ -1,8 +1,9 @@
 #include "led-panel.h"
 #include "colors.h"
+#include "pir-sensor.h"
 
 LEDPanel::LEDPanel(int toto) {
-    // Module configuration
+  // Module configuration
   HUB75_I2S_CFG mxconfig(
     SCREEN_WIDTH,   // module width
     SCREEN_HEIGHT,  // module height
@@ -28,5 +29,18 @@ void LEDPanel::setup() {
 }
 
 void LEDPanel::loop() {
-  //dma_display->clearScreen();
+  if (PIRSensor::isTriggered()) {
+    this->wakeUp();
+  }
+  if (isStandby()) {
+    dma_display->clearScreen();
+  }
+}
+
+bool LEDPanel::isStandby() {
+  return millis() > this->nextStandbyInMs;
+}
+
+void LEDPanel::wakeUp() {
+  this->nextStandbyInMs = millis() + (standbyDelayInSeconds * 1000);
 }
