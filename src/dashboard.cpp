@@ -57,12 +57,12 @@ void Dashboard::loop() {
   this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
   Serial.println("[dash] ecran clear");
 
-  HistoryPoint etagePoints[MAX_POINTS];
+  static HistoryPoint etagePoints[MAX_POINTS];
   Serial.println("[dash] fetch sensor.temperature_etage...");
   int etageCount = HomeAssistant::getHistory("sensor.temperature_etage", etagePoints, MAX_POINTS, 24);
   Serial.printf("[dash] etage: %d points\n", etageCount);
 
-  HistoryPoint extPoints[MAX_POINTS];
+  static HistoryPoint extPoints[MAX_POINTS];
   Serial.println("[dash] fetch sensor.domo_ext_rieur...");
   int extCount = HomeAssistant::getHistory("sensor.domo_ext_rieur", extPoints, MAX_POINTS, 24);
   Serial.printf("[dash] ext: %d points\n", extCount);
@@ -93,8 +93,8 @@ void Dashboard::loop() {
     Serial.printf("[dash] timeRange=%ld minTs=%ld maxTs=%ld\n", timeRange, minTs, maxTs);
     if (timeRange == 0) timeRange = 1;
 
-    uint8_t etageXs[MAX_POINTS];
-    int16_t etageTemps[MAX_POINTS];
+    static uint8_t etageXs[MAX_POINTS];
+    static int16_t etageTemps[MAX_POINTS];
 
     for (int i = 0; i < etageCount; i++) {
       int x = (int)(((etagePoints[i].ts - minTs) / (float)timeRange) * 63);
@@ -107,8 +107,8 @@ void Dashboard::loop() {
     Serial.printf("[dash] draw courbe etage (%d points)\n", etageCount);
     drawCurve(etageTemps, etageCount, etageXs, Colors::blue(this->ledPanel->dma_display));
 
-    uint8_t extXs[MAX_POINTS];
-    int16_t extTemps[MAX_POINTS];
+    static uint8_t extXs[MAX_POINTS];
+    static int16_t extTemps[MAX_POINTS];
 
     for (int i = 0; i < extCount; i++) {
       int x = (int)(((extPoints[i].ts - minTs) / (float)timeRange) * 63);
