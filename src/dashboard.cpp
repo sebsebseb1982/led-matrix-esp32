@@ -124,13 +124,23 @@ void Dashboard::drawCurrentValues(float etageTemp, float extTemp) {
   int totalW = textW + gap + degCW + rightPad;
   int textX  = SCREEN_WIDTH - totalW;
 
-  this->ledPanel->dma_display->setTextSize(1);
-  this->ledPanel->dma_display->setTextWrap(false);
-  this->ledPanel->dma_display->fillRect(textX, 1, totalW, 8, Colors::black(this->ledPanel->dma_display));
-  this->ledPanel->dma_display->setCursor(textX, 1);
-  this->ledPanel->dma_display->setTextColor(highColor);
-  this->ledPanel->dma_display->print(buf);
-  drawDegC(this->ledPanel->dma_display, textX + textW + gap, 1, highColor);
+  auto* disp = this->ledPanel->dma_display;
+  uint16_t shadowColor = Colors::black(disp);
+  disp->setTextSize(1);
+  disp->setTextWrap(false);
+
+  const int8_t offsets[4][2] = {{-1,0},{1,0},{0,-1},{0,1}};
+  for (auto& off : offsets) {
+    disp->setCursor(textX + off[0], 1 + off[1]);
+    disp->setTextColor(shadowColor);
+    disp->print(buf);
+    drawDegC(disp, textX + textW + gap + off[0], 1 + off[1], shadowColor);
+  }
+
+  disp->setCursor(textX, 1);
+  disp->setTextColor(highColor);
+  disp->print(buf);
+  drawDegC(disp, textX + textW + gap, 1, highColor);
 }
 
 void Dashboard::drawVentilation(bool isOn) {
