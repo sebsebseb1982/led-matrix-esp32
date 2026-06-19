@@ -79,6 +79,7 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
   url += entityName;
   url += F("&end_time=");
   url += getTimestamp(0);
+  url += F("&minimal_response");
 
   Serial.printf("[ha] url=%s\n", url.c_str());
 
@@ -114,21 +115,16 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
     return 0;
   }
 
-  JsonArray result = doc["result"].as<JsonArray>();
+  JsonArray result = doc.as<JsonArray>();
   int count = 0;
   
-  for (JsonObject period : result) {
+  for (JsonObject state : result) {
     if (count >= maxPoints) break;
     
-    JsonArray states = period["states"].as<JsonArray>();
-    for (JsonObject state : states) {
-      if (count >= maxPoints) break;
-      
-      HistoryPoint p;
-      p.ts = (int)state["last_changed_ts"].as<long>();
-      p.value = state["state"].as<float>();
-      points[count++] = p;
-    }
+    HistoryPoint p;
+    p.ts = (int)state["last_changed_ts"].as<long>();
+    p.value = state["state"].as<float>();
+    points[count++] = p;
   }
 
   Serial.printf("[ha] %s: %d points retournes\n", entityName.c_str(), count);
