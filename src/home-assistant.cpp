@@ -66,6 +66,8 @@ String HomeAssistant::getEntityState(String entityName) {
 }
 
 int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPoints, long hoursBack) {
+  Serial.printf("[ha] getHistory(%s, %dh)\n", entityName.c_str(), hoursBack);
+
   HTTPClient http;
 
   String url;
@@ -75,6 +77,8 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
   url += getTimestamp(hoursBack);
   url += F("&entity_id=");
   url += entityName;
+
+  Serial.printf("[ha] url=%s\n", url.c_str());
 
   http.begin(url);
   String bearer;
@@ -88,23 +92,23 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
   do {
     httpCode = http.GET();
     retry++;
+    Serial.printf("[ha] httpCode=%d retry=%d\n", httpCode, retry);
   } while (httpCode <= 0 && retry < HTTP_RETRY);
 
   if (httpCode != 200) {
-    Serial.print(F("History KO: "));
-    Serial.println(httpCode);
+    Serial.printf("[ha] History KO: %d\n", httpCode);
     http.end();
     return 0;
   }
 
   String response = http.getString();
+  Serial.printf("[ha] reponse=%d bytes\n", response.length());
   http.end();
 
   DynamicJsonDocument doc(16384);
   DeserializationError error = deserializeJson(doc, response);
   if (error) {
-    Serial.print(F("deserializeJson history failed: "));
-    Serial.println(error.c_str());
+    Serial.printf("[ha] deserializeJson failed: %s\n", error.c_str());
     return 0;
   }
 
@@ -125,5 +129,10 @@ int HomeAssistant::getHistory(String entityName, HistoryPoint* points, int maxPo
     }
   }
 
+  Serial.printf("[ha] %s: %d points retournes\n", entityName.c_str(), count);
+  if (count > 0) {
+    Serial.printf("[ha] premier: ts=%ld val=%.1f\n", points[0].ts, points[0].value);
+    Serial.printf("[ha] dernier: ts=%ld val=%.1f\n", points[count-1].ts, points[count-1].value);
+  }
   return count;
 }

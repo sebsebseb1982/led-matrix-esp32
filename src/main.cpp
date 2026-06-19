@@ -12,7 +12,9 @@ Brightness brightness(&ledPanel);
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("setup()");
+  Serial.println("==============================");
+  Serial.println("REBOOT apres deep sleep");
+  Serial.println("==============================");
   WiFiConnection::setup();
   OTA::setup();
   ledPanel.setup();
@@ -24,8 +26,7 @@ void setup() {
   brightness.loop();
   dashboard.loop();
 
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, HIGH);
-
+  Serial.println("");
   Serial.println("Rentre en mode Deep Sleep");
   Serial.println("----------------------");
   esp_deep_sleep_start();

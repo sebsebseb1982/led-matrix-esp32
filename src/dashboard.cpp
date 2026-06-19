@@ -34,9 +34,12 @@ Dashboard::Dashboard(LEDPanel *ledPanel) {
 }
 
 void Dashboard::setup() {
+  Serial.println("[dash] setup OK");
 }
 
 void Dashboard::loop() {
+  Serial.println("[dash] === BOUCLE ===");
+
   struct tm timeinfo;
   int retries = 0;
   while (!getLocalTime(&timeinfo) && retries < 10) {
@@ -44,17 +47,29 @@ void Dashboard::loop() {
     retries++;
   }
 
+  if (retries >= 10) {
+    Serial.println("[dash] ERREUR: getLocalTime a echoue apres 10 retries");
+  } else {
+    Serial.printf("[dash] NTP OK: %02d:%02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  }
+
   this->ledPanel->dma_display->clearScreen();
   this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
+  Serial.println("[dash] ecran clear");
 
   HistoryPoint etagePoints[MAX_POINTS];
+  Serial.println("[dash] fetch sensor.temperature_etage...");
   int etageCount = HomeAssistant::getHistory("sensor.temperature_etage", etagePoints, MAX_POINTS, 24);
+  Serial.printf("[dash] etage: %d points\n", etageCount);
 
   HistoryPoint extPoints[MAX_POINTS];
+  Serial.println("[dash] fetch sensor.domo_ext_rieur...");
   int extCount = HomeAssistant::getHistory("sensor.domo_ext_rieur", extPoints, MAX_POINTS, 24);
+  Serial.printf("[dash] ext: %d points\n", extCount);
 
   if (etageCount > 0 && extCount > 0) {
     DataStore::store(etagePoints[etageCount - 1].value, extPoints[extCount - 1].value);
+    Serial.printf("[dash] DataStore: etage=%.1f ext=%.1f\n", etagePoints[etageCount - 1].value, extPoints[extCount - 1].value);
   }
 
   if (etageCount > 1 && extCount > 1) {
@@ -75,6 +90,7 @@ void Dashboard::loop() {
     }
 
     long timeRange = maxTs - minTs;
+    Serial.printf("[dash] timeRange=%ld minTs=%ld maxTs=%ld\n", timeRange, minTs, maxTs);
     if (timeRange == 0) timeRange = 1;
 
     uint8_t etageXs[MAX_POINTS];
@@ -88,6 +104,7 @@ void Dashboard::loop() {
       etageTemps[i] = (int16_t)(etagePoints[i].value * 10);
     }
 
+    Serial.printf("[dash] draw courbe etage (%d points)\n", etageCount);
     drawCurve(etageTemps, etageCount, etageXs, Colors::blue(this->ledPanel->dma_display));
 
     uint8_t extXs[MAX_POINTS];
@@ -101,12 +118,17 @@ void Dashboard::loop() {
       extTemps[i] = (int16_t)(extPoints[i].value * 10);
     }
 
+    Serial.printf("[dash] draw courbe ext (%d points)\n", extCount);
     drawCurve(extTemps, extCount, extXs, Colors::red(this->ledPanel->dma_display));
+
+    Serial.println("[dash] affichage termine");
   } else {
+    Serial.printf("[dash] PAS ASSEZ DE DONNEES: etage=%d ext=%d\n", etageCount, extCount);
     this->ledPanel->dma_display->setCursor(5, 30);
     this->ledPanel->dma_display->setTextColor(Colors::lightGrey(this->ledPanel->dma_display));
     this->ledPanel->dma_display->print("Pas de donnees");
   }
 
+  Serial.println("[dash] == FIN BOUCLE ==");
   delay(5000);
 }
