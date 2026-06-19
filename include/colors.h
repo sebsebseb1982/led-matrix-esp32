@@ -8,6 +8,7 @@ class Colors {
     static uint16_t black(MatrixPanel_I2S_DMA* dma_display);
     static uint16_t grey(MatrixPanel_I2S_DMA* dma_display);
     static uint16_t lightGrey(MatrixPanel_I2S_DMA* dma_display);
+    static uint16_t darkGrey(MatrixPanel_I2S_DMA* dma_display);
     static uint16_t white(MatrixPanel_I2S_DMA* dma_display);
     static uint16_t red(MatrixPanel_I2S_DMA* dma_display);
     static uint16_t green(MatrixPanel_I2S_DMA* dma_display);

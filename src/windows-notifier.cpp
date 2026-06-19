@@ -14,27 +14,17 @@ void WindowsNotifier::setup() {
 void WindowsNotifier::loop() {
   if (millis() > this->nextCheckInMs) {
     this->nextCheckInMs = millis() + (checkEveryNSeconds * 1000);
-    Data data = DataStore::get();
+    
+    float tempEtage = DataStore::getLatestEtage();
+    float tempExt = DataStore::getLatestExt();
 
-    if (data.temperatureOutside > data.temperatureInsideUpstairs && this->upstairsShouldBeOpened) {
+    if (tempExt > tempEtage && this->upstairsShouldBeOpened) {
       this->upstairsShouldBeOpened = false;
       this->ledPanel->wakeUp();
       Buzzer::beepbeepbeep(400);
     }
 
-    if (data.temperatureOutside > data.temperatureInsideDownstairs && this->downstairsShouldBeOpened) {
-      this->downstairsShouldBeOpened = false;
-      this->ledPanel->wakeUp();
-      Buzzer::beepbeepbeep(400);
-    }
-
-    if (data.temperatureOutside < data.temperatureInsideUpstairs && !this->upstairsShouldBeOpened) {
-      this->upstairsShouldBeOpened = true;
-      this->ledPanel->wakeUp();
-      Buzzer::beepbeepbeep(50);
-    }
-
-    if (data.temperatureOutside < data.temperatureInsideUpstairs && !this->upstairsShouldBeOpened) {
+    if (tempExt < tempEtage && !this->upstairsShouldBeOpened) {
       this->upstairsShouldBeOpened = true;
       this->ledPanel->wakeUp();
       Buzzer::beepbeepbeep(50);

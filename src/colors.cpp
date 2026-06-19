@@ -12,6 +12,10 @@ uint16_t Colors::lightGrey(MatrixPanel_I2S_DMA* dma_display) {
   return dma_display->color565(100, 100, 100);
 }
 
+uint16_t Colors::darkGrey(MatrixPanel_I2S_DMA* dma_display) {
+  return dma_display->color565(40, 40, 40);
+}
+
 uint16_t Colors::white(MatrixPanel_I2S_DMA* dma_display) {
   return dma_display->color565(255, 255, 255);
 }

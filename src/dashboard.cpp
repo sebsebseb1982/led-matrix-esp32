@@ -1,184 +1,139 @@
-#include "colors.h"
 #include "dashboard.h"
 #include "data-store.h"
-
-#define houseWidth 50
-#define houseHeight 48
-#define roofHeight 10
-#define roofOverflow 6
-#define pixelsShown 34
-#define windowHeight 10
-#define windowWidth 3
-#define refreshDataInSeconds 30
+#include "colors.h"
+#include "home-assistant.h"
+#include <Arduino.h>
+#include <stdio.h>
 
 Dashboard::Dashboard(LEDPanel *ledPanel) {
   this->ledPanel = ledPanel;
 }
 
 void Dashboard::setup() {
+  DataStore::setup();
 }
 
 void Dashboard::loop() {
-  Data data = DataStore::get();
-
+  DataStore::store(
+    HomeAssistant::getEntityState("sensor.temperature_etage").toFloat(),
+    HomeAssistant::getEntityState("sensor.domo_ext_rieur").toFloat()
+  );
+  
   this->ledPanel->dma_display->clearScreen();
-  displayTemperature(
-    3,
-    25,
-    data.temperatureInsideUpstairs,
-    18,
-    28);
-
-  displayTemperature(
-    3,
-    48,
-    data.temperatureInsideDownstairs,
-    18,
-    28);
-
-  displayTemperature(
-    38,
-    3,
-    data.temperatureOutside,
-    0,
-    34);
-
-  drawHouse();
-  drawWindow(
-    pixelsShown - 2,
-    SCREEN_HEIGHT - (houseHeight / 4) - (windowHeight / 2) - 1,
-    data.temperatureInsideDownstairs >= data.temperatureOutside);
-  drawWindow(
-    pixelsShown - 2,
-    SCREEN_HEIGHT - ((3 * houseHeight) / 4) - (windowHeight / 2),
-    data.temperatureInsideUpstairs >= data.temperatureOutside);
-
+  this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
+  
+  drawGrid();
+  drawYLabels();
+  drawLegend();
+  
+  int count = DataStore::getCount();
+  if (count > 1) {
+    int16_t etageTemps[MAX_READINGS];
+    int16_t extTemps[MAX_READINGS];
+    
+    for (int i = 0; i < count; i++) {
+      Reading r = DataStore::getReading(i);
+      etageTemps[i] = r.tempEtage;
+      extTemps[i] = r.tempExt;
+    }
+    
+    drawCurve(etageTemps, count, Colors::blue(this->ledPanel->dma_display), 0, 24);
+    drawCurve(extTemps, count, Colors::red(this->ledPanel->dma_display), 0, 24);
+  } else {
+    this->ledPanel->dma_display->setCursor(5, 30);
+    this->ledPanel->dma_display->setTextColor(Colors::lightGrey(this->ledPanel->dma_display));
+    this->ledPanel->dma_display->print("Chargement...");
+  }
+  
   delay(5000);
 }
 
-void Dashboard::displayTemperature(int x, int y, float value, float minimum, float maximum) {
-  float middleBetweenMinAndMax = minimum + ((maximum - minimum) / 2);
-
-  int r, g, b;
-  if (value < middleBetweenMinAndMax) {
-    float norm_temp = min(float((value - minimum) / (middleBetweenMinAndMax - minimum)), float(1.0));
-    r = int(255 * norm_temp);
-    g = int(255 * norm_temp);
-    b = 255;
-  } else if (value > middleBetweenMinAndMax) {
-    float norm_temp = max(float(1.0 - (value - middleBetweenMinAndMax) / (maximum - middleBetweenMinAndMax)), float(0.0));
-    r = 255;
-    g = int(255 * norm_temp);
-    b = int(255 * norm_temp);
-  } else {
-    r = 255;
-    g = 255;
-    b = 255;
-  }
-
-  this->ledPanel->dma_display->setCursor(x, y);
-  this->ledPanel->dma_display->setTextColor(Colors::rgb(
-    this->ledPanel->dma_display,
-    r,
-    g,
-    b));
-  this->ledPanel->dma_display->print(String(value, 1));
+int Dashboard::tempToY(int16_t temp) {
+  float ratio = (temp - TEMP_MIN) / (float)TEMP_RANGE;
+  return GRAPH_TOP + GRAPH_HEIGHT - (int)(ratio * GRAPH_HEIGHT);
 }
 
-void Dashboard::drawHouse() {
-  uint16_t wallsColor = Colors::rgb(this->ledPanel->dma_display, 168, 168, 168);
-  uint16_t tilesColor = Colors::rgb(this->ledPanel->dma_display, 255, 200, 133);
-
-  this->ledPanel->dma_display->drawRect(
-    pixelsShown - houseWidth,
-    SCREEN_HEIGHT - houseHeight,
-    houseWidth,
-    houseHeight,
-    wallsColor);
-
-  this->ledPanel->dma_display->drawLine(
-    pixelsShown - houseWidth,
-    SCREEN_HEIGHT - (houseHeight / 2),
-    pixelsShown - 1,
-    SCREEN_HEIGHT - (houseHeight / 2),
-    wallsColor);
-
-  this->ledPanel->dma_display->drawTriangle(
-    pixelsShown - houseWidth - roofOverflow,
-    SCREEN_HEIGHT - houseHeight,
-    pixelsShown + roofOverflow,
-    SCREEN_HEIGHT - houseHeight,
-    (pixelsShown - houseWidth) + (houseWidth / 2),
-    SCREEN_HEIGHT - houseHeight - roofHeight,
-    wallsColor);
+int Dashboard::hourToX(int hour) {
+  float ratio = hour / 24.0;
+  return GRAPH_LEFT + (int)(ratio * GRAPH_WIDTH);
 }
 
-void Dashboard::drawWindow(int x, int y, bool open) {
-
-  this->ledPanel->dma_display->fillRect(
-    x,
-    y,
-    windowWidth,
-    windowHeight,
-    Colors::black(this->ledPanel->dma_display));
-
-  uint16_t wallsColor = Colors::rgb(this->ledPanel->dma_display, 168, 168, 168);
-  uint16_t blueColor = Colors::blue(this->ledPanel->dma_display);
-  uint16_t redColor = Colors::red(this->ledPanel->dma_display);
-
-  this->ledPanel->dma_display->drawLine(
-    x,
-    y,
-    x + windowWidth - 1,
-    y,
-    wallsColor);
-
-  this->ledPanel->dma_display->drawLine(
-    x,
-    y + windowHeight,
-    x + windowWidth - 1,
-    y + windowHeight,
-    wallsColor);
-
-  if (open) {
-    for (int i = 0; i < 2; i++) {
-      this->ledPanel->dma_display->drawPixel(
-        x - 1,
-        y + 3 + i * 4,
-        blueColor);
-
-      this->ledPanel->dma_display->drawPixel(
-        x,
-        y + 2 + i * 4,
-        blueColor);
-
-      this->ledPanel->dma_display->drawPixel(
-        x + 1,
-        y + 3 + i * 4,
-        blueColor);
-
-      this->ledPanel->dma_display->drawPixel(
-        x + 2,
-        y + 4 + i * 4,
-        blueColor);
-
-      this->ledPanel->dma_display->drawPixel(
-        x + 3,
-        y + 3 + i * 4,
-        blueColor);
-    }
-  } else {
-    this->ledPanel->dma_display->drawCircle(
-      x + 1,
-      y + 5,
-      3,
-      redColor);
-
+void Dashboard::drawGrid() {
+  uint16_t gridColor = Colors::darkGrey(this->ledPanel->dma_display);
+  
+  for (int temp = TEMP_MIN; temp <= TEMP_MAX; temp += 10) {
+    int y = tempToY(temp);
     this->ledPanel->dma_display->drawLine(
-      x - 1,
-      y + 7,
-      x + 3,
-      y + 3,
-      redColor);
+      GRAPH_LEFT, y, GRAPH_RIGHT, y, gridColor
+    );
+  }
+  
+  for (int hour = 0; hour <= 24; hour += 6) {
+    int x = hourToX(hour);
+    this->ledPanel->dma_display->drawLine(
+      x, GRAPH_TOP, x, GRAPH_BOTTOM, gridColor
+    );
+  }
+  
+  uint16_t frameColor = Colors::lightGrey(this->ledPanel->dma_display);
+  this->ledPanel->dma_display->drawRect(
+    GRAPH_LEFT, GRAPH_TOP, GRAPH_WIDTH, GRAPH_HEIGHT, frameColor
+  );
+}
+
+void Dashboard::drawCurve(const int16_t* temps, int count, uint16_t color, int minHour, int maxHour) {
+  int prevX = -1;
+  int prevY = -1;
+  
+  for (int i = 0; i < count; i++) {
+    int h = DataStore::getHoursAgo(i);
+    if (h < minHour || h > maxHour) continue;
+    
+    int16_t temp = temps[i];
+    if (temp < (TEMP_MIN * 10) || temp > (TEMP_MAX * 10)) continue;
+    
+    int x = hourToX(h);
+    int y = tempToY(temp);
+    
+    if (prevX >= 0) {
+      this->ledPanel->dma_display->drawLine(prevX, prevY, x, y, color);
+    }
+    
+    prevX = x;
+    prevY = y;
+  }
+}
+
+void Dashboard::drawLegend() {
+  uint16_t blue = Colors::blue(this->ledPanel->dma_display);
+  uint16_t red = Colors::red(this->ledPanel->dma_display);
+  uint16_t white = Colors::white(this->ledPanel->dma_display);
+  
+  this->ledPanel->dma_display->fillRect(44, 1, 4, 3, blue);
+  this->ledPanel->dma_display->setCursor(50, 0);
+  this->ledPanel->dma_display->setTextColor(white);
+  this->ledPanel->dma_display->print("Etage");
+  
+  this->ledPanel->dma_display->fillRect(44, 5, 4, 3, red);
+  this->ledPanel->dma_display->setCursor(50, 4);
+  this->ledPanel->dma_display->setTextColor(white);
+  this->ledPanel->dma_display->print("Ext");
+  
+  this->ledPanel->dma_display->setCursor(3, 0);
+  this->ledPanel->dma_display->setTextColor(white);
+  this->ledPanel->dma_display->print("TEMP 24H");
+}
+
+void Dashboard::drawYLabels() {
+  uint16_t grey = Colors::darkGrey(this->ledPanel->dma_display);
+  
+  for (int temp = TEMP_MIN; temp <= TEMP_MAX; temp += 10) {
+    int y = tempToY(temp);
+    this->ledPanel->dma_display->setCursor(0, y - 1);
+    this->ledPanel->dma_display->setTextColor(grey);
+    
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%d", temp);
+    this->ledPanel->dma_display->print(buf);
   }
 }
