@@ -6,9 +6,11 @@
 class Dashboard {
   private:
     LEDPanel *ledPanel;
-    int tempToY(int16_t temp);
-    int heureToX(uint8_t heure);
-    void drawCurve(const int16_t* temps, int count, const uint8_t* heures, uint16_t color);
+    int tempToY(float temp, float tMin, float tMax);
+    void drawFills(const float* etageTemps, const float* extTemps, int numPixels, float tMin, float tMax, uint16_t etageColor, uint16_t extColor);
+    void drawCurve(const float* temps, int numPixels, float tMin, float tMax, uint16_t color);
+    void drawCurrentValues(float etageTemp, float extTemp);
+    void drawVentilation(bool isOn);
   public:
     Dashboard(LEDPanel *ledPanel);
     void setup();

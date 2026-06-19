@@ -4,7 +4,7 @@
 #define frequence 2000  //Fréquence PWM de 1 KHz
 #define resolution 8    // Résolution de 8 bits, 256 valeurs possibles
 
-#define BUZZER_PIN 0
+#define BUZZER_PIN 18
 
 unsigned long Buzzer::stopBeepMillis = 0;
 unsigned int Buzzer::currentLevel = 0;
