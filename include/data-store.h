@@ -7,8 +7,9 @@
 
 typedef struct {
   uint16_t seq;
-  int16_t tempEtage;  // étage temperature * 10 (e.g., 215 = 21.5°C)
-  int16_t tempExt;    // extérieur temperature * 10
+  uint8_t heure;    // heure du relevé (0-23)
+  int16_t tempEtage; // étage temperature * 10 (e.g., 215 = 21.5°C)
+  int16_t tempExt;   // extérieur temperature * 10
 } Reading;
 
 class DataStore {
@@ -16,17 +17,13 @@ class DataStore {
     static const char* NVS_NAMESPACE;
     static const char* NVS_KEY_COUNT;
     static const char* NVS_KEY_DATA;
-    static const char* NVS_KEY_REFERENCE;
-    static uint32_t referenceTimestamp;
-    static bool referenceSet;
   public:
     static void setup();
-    static void store(float tempEtage, float tempExt);
+    static void store(float tempEtage, float tempExt, uint8_t heure);
     static int getCount();
     static Reading getReading(int index);
     static float getLatestEtage();
     static float getLatestExt();
-    static int getHoursAgo(int index);
 };
 
 #endif

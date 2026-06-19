@@ -8,7 +8,7 @@ const char* DataStore::NVS_KEY_DATA = "data";
 void DataStore::setup() {
 }
 
-void DataStore::store(float tempEtage, float tempExt) {
+void DataStore::store(float tempEtage, float tempExt, uint8_t heure) {
   Preferences prefs;
   if (!prefs.begin(NVS_NAMESPACE, false)) {
     return;
@@ -18,6 +18,7 @@ void DataStore::store(float tempEtage, float tempExt) {
   
   Reading newReading;
   newReading.seq = count;
+  newReading.heure = heure;
   newReading.tempEtage = (int16_t)(tempEtage * 10);
   newReading.tempExt = (int16_t)(tempExt * 10);
   
@@ -51,7 +52,7 @@ int DataStore::getCount() {
 }
 
 Reading DataStore::getReading(int index) {
-  Reading empty = {0, 0, 0};
+  Reading empty = {0, 0, 0, 0};
   
   Preferences prefs;
   if (!prefs.begin(NVS_NAMESPACE, true)) {
@@ -84,15 +85,4 @@ float DataStore::getLatestExt() {
   if (count == 0) return 0.0;
   Reading r = getReading(count - 1);
   return r.tempExt / 10.0;
-}
-
-int DataStore::getHoursAgo(int index) {
-  int count = getCount();
-  if (count == 0) return 24;
-  
-  int readingsPerHour = 12;
-  int hoursAgo = (count - 1 - index) / readingsPerHour;
-  if (hoursAgo < 0) hoursAgo = 0;
-  if (hoursAgo > 24) hoursAgo = 24;
-  return hoursAgo;
 }
