@@ -2,6 +2,10 @@
 #include "colors.h"
 #include "home-assistant.h"
 #include "data-store.h"
+#include "buzzer.h"
+#include <esp_attr.h>
+
+RTC_DATA_ATTR static int lastVentilationState = -1; // survit au deep sleep
 #include <Arduino.h>
 #include <time.h>
 #include <math.h>
@@ -190,6 +194,11 @@ void Dashboard::loop() {
   Serial.println("[dash] fetch etat_ventilation...");
   String ventStr = HomeAssistant::getEntityState("input_boolean.etat_ventilation");
   Serial.printf("[dash] ventilation: %s\n", ventStr.c_str());
+  bool ventIsOn = (ventStr == "on");
+  if (lastVentilationState != -1 && (bool)lastVentilationState != ventIsOn) {
+    Buzzer::beepbeepbeep(ventIsOn ? 50 : 200);
+  }
+  lastVentilationState = ventIsOn ? 1 : 0;
 
   this->ledPanel->dma_display->clearScreen();
   this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
@@ -228,7 +237,7 @@ void Dashboard::loop() {
   if (extValid > 0)   drawCurve(extTemps,   PANEL_W, tMin, tMax, Colors::red(this->ledPanel->dma_display));
 
   drawCurrentValues(lastEtage, lastExt);
-  drawVentilation(ventStr == "on");
+  drawVentilation(ventIsOn);
 
   if (etageValid == 0 && extValid == 0) {
     this->ledPanel->dma_display->setCursor(5, 30);
