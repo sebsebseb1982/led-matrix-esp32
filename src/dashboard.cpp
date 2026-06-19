@@ -1,18 +1,11 @@
 #include "dashboard.h"
 #include "colors.h"
-#include "home-assistant.h"
-#include "data-store.h"
-#include "buzzer.h"
-#include <esp_attr.h>
-
-RTC_DATA_ATTR static int lastVentilationState = -1; // survit au deep sleep
+#include "weather-service.h"
 #include <Arduino.h>
 #include <time.h>
 #include <math.h>
 
-#define PANEL_W     64
-#define PANEL_H     64
-#define CURVE_PAD    4
+#define CURVE_PAD 4
 
 int Dashboard::tempToY(float temp, float tMin, float tMax) {
   float range = tMax - tMin;
@@ -20,7 +13,7 @@ int Dashboard::tempToY(float temp, float tMin, float tMax) {
   if (ratio < 0.0f) ratio = 0.0f;
   if (ratio > 1.0f) ratio = 1.0f;
   int topY    = CURVE_PAD;
-  int bottomY = PANEL_H - 1 - CURVE_PAD;
+  int bottomY = SCREEN_HEIGHT - 1 - CURVE_PAD;
   return bottomY - (int)(ratio * (bottomY - topY));
 }
 
@@ -39,13 +32,13 @@ static uint16_t addColors565(uint16_t c1, uint16_t c2) {
 }
 
 void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
-                           int numPixels, float tMin, float tMax,
+                           int n, float tMin, float tMax,
                            uint16_t etageColor, uint16_t extColor) {
   uint16_t dimEtage = dimColor565(etageColor, 7);
   uint16_t dimExt   = dimColor565(extColor,   7);
-  int bottomY = PANEL_H - 1;
+  int bottomY = SCREEN_HEIGHT - 1;
 
-  for (int x = 0; x < numPixels; x++) {
+  for (int x = 0; x < n; x++) {
     bool hasEtage = !isnan(etageTemps[x]);
     bool hasExt   = !isnan(extTemps[x]);
     int yEtage = hasEtage ? tempToY(etageTemps[x], tMin, tMax) : bottomY + 1;
@@ -61,8 +54,8 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
   }
 }
 
-void Dashboard::drawCurve(const float* temps, int numPixels, float tMin, float tMax, uint16_t color) {
-  for (int x = 1; x < numPixels; x++) {
+void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, uint16_t color) {
+  for (int x = 1; x < n; x++) {
     if (isnan(temps[x]) || isnan(temps[x - 1])) continue;
     int y0 = tempToY(temps[x - 1], tMin, tMax);
     int y1 = tempToY(temps[x], tMin, tMax);
@@ -70,7 +63,7 @@ void Dashboard::drawCurve(const float* temps, int numPixels, float tMin, float t
   }
 }
 
-// Coche verte 5×5
+// Coche verte 5x5
 static void drawCheckmark(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+4, y+0, color);
   disp->drawPixel(x+3, y+1, color);
@@ -78,7 +71,7 @@ static void drawCheckmark(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t colo
   disp->drawPixel(x+0, y+3, color);
 }
 
-// Croix rouge 5×5
+// Croix rouge 5x5
 static void drawCross(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+0, y+0, color); disp->drawPixel(x+4, y+0, color);
   disp->drawPixel(x+1, y+1, color); disp->drawPixel(x+3, y+1, color);
@@ -87,14 +80,12 @@ static void drawCross(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+0, y+4, color); disp->drawPixel(x+4, y+4, color);
 }
 
-// °C en pixel art : ° (3x3) + gap (1px) + C (3x5) = 7px wide, 5px tall
+// degC en pixel art : deg (3x3) + gap (1px) + C (3x5) = 7px wide, 5px tall
 static void drawDegC(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
-  // °
   disp->drawPixel(x+1, y+0, color);
   disp->drawPixel(x+0, y+1, color);
   disp->drawPixel(x+2, y+1, color);
   disp->drawPixel(x+1, y+2, color);
-  // C
   disp->drawPixel(x+5, y+0, color); disp->drawPixel(x+6, y+0, color);
   disp->drawPixel(x+4, y+1, color);
   disp->drawPixel(x+4, y+2, color);
@@ -126,12 +117,12 @@ void Dashboard::drawCurrentValues(float etageTemp, float extTemp) {
   sprintf(buf, "%.1f", highTemp);
   for (int i = 0; buf[i]; i++) if (buf[i] == '.') { buf[i] = ','; break; }
 
-  const int degCW    = 7;  // largeur du symbole °C pixel art
+  const int degCW    = 7;
   const int gap      = 0;
   const int rightPad = 1;
   int textW  = strlen(buf) * 6;
   int totalW = textW + gap + degCW + rightPad;
-  int textX  = PANEL_W - totalW;
+  int textX  = SCREEN_WIDTH - totalW;
 
   this->ledPanel->dma_display->setTextSize(1);
   this->ledPanel->dma_display->setTextWrap(false);
@@ -148,12 +139,39 @@ void Dashboard::drawVentilation(bool isOn) {
   const int pad    = 1;
   const int symSz  = 5;
   int rx = margin;
-  int ry = PANEL_H - margin - (2 * pad + symSz);  // ancrée en bas à gauche
+  int ry = SCREEN_HEIGHT - margin - (2 * pad + symSz);
   disp->fillRect(rx, ry, 2 * pad + symSz, 2 * pad + symSz, Colors::rgb(disp, 150, 150, 150));
   if (isOn)
     drawCheckmark(disp, rx + pad, ry + pad, Colors::green(disp));
   else
     drawCross(disp, rx + pad, ry + pad, Colors::red(disp));
+}
+
+static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
+  const int cx     = SCREEN_WIDTH  / 2;
+  const int cy     = SCREEN_HEIGHT / 2;  // cadran centre sur l'ecran
+  const int radius = 13;
+
+  uint16_t cBody = Colors::lightGrey(disp);
+  uint16_t cTick = Colors::white(disp);
+  uint16_t cHand = Colors::rgb(disp, 255, 180, 0);  // ambre
+
+  // Couronne (base uniquement, se connecte au cercle)
+  disp->fillRect(cx - 4, cy - radius - 3, 9, 3, cBody);
+
+  // Boitier
+  disp->drawCircle(cx, cy, radius, cBody);
+
+  // Reperes horaires (3px vers l'interieur depuis le bord)
+  disp->drawLine(cx + radius - 2, cy,          cx + radius, cy,          cTick);  // 3h
+  disp->drawLine(cx,              cy + radius - 2, cx,       cy + radius, cTick);  // 6h
+  disp->drawLine(cx - radius,     cy,          cx - radius + 2, cy,       cTick);  // 9h
+
+  // Aiguille vers 12h
+  disp->drawLine(cx, cy, cx, cy - radius + 3, cHand);
+
+  // Moyeu central
+  disp->fillRect(cx - 1, cy - 1, 3, 3, cTick);
 }
 
 Dashboard::Dashboard(LEDPanel *ledPanel) {
@@ -162,6 +180,12 @@ Dashboard::Dashboard(LEDPanel *ledPanel) {
 
 void Dashboard::setup() {
   Serial.println("[dash] setup OK");
+}
+
+void Dashboard::showLoading() {
+  this->ledPanel->dma_display->clearScreen();
+  this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
+  drawLoadingIcon(this->ledPanel->dma_display);
 }
 
 void Dashboard::loop() {
@@ -173,50 +197,24 @@ void Dashboard::loop() {
     delay(500);
     retries++;
   }
-
   if (retries >= 10) {
     Serial.println("[dash] ERREUR: getLocalTime echoue");
   } else {
     Serial.printf("[dash] NTP OK: %02d:%02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
   }
 
-  static float etageTemps[PANEL_W];
-  static float extTemps[PANEL_W];
-
-  Serial.println("[dash] fetch temperature_etage...");
-  int etageValid = HomeAssistant::getHistory("sensor.temperature_etage", etageTemps, PANEL_W, 24);
-  Serial.printf("[dash] etage: %d pixels valides\n", etageValid);
-
-  Serial.println("[dash] fetch domo_ext_rieur...");
-  int extValid = HomeAssistant::getHistory("sensor.domo_ext_rieur", extTemps, PANEL_W, 24);
-  Serial.printf("[dash] ext: %d pixels valides\n", extValid);
-
-  Serial.println("[dash] fetch etat_ventilation...");
-  String ventStr = HomeAssistant::getEntityState("input_boolean.etat_ventilation");
-  Serial.printf("[dash] ventilation: %s\n", ventStr.c_str());
-  bool ventIsOn = (ventStr == "on");
-  if (lastVentilationState != -1 && (bool)lastVentilationState != ventIsOn) {
-    Buzzer::beepbeepbeep(ventIsOn ? 50 : 200);
-  }
-  lastVentilationState = ventIsOn ? 1 : 0;
+  WeatherService::refresh();
 
   this->ledPanel->dma_display->clearScreen();
   this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
 
-  // Stocker la derniere valeur connue pour chaque capteur
-  float lastEtage = NAN, lastExt = NAN;
-  for (int i = PANEL_W - 1; i >= 0; i--) {
-    if (isnan(lastEtage) && !isnan(etageTemps[i])) lastEtage = etageTemps[i];
-    if (isnan(lastExt)   && !isnan(extTemps[i]))   lastExt   = extTemps[i];
-    if (!isnan(lastEtage) && !isnan(lastExt)) break;
-  }
-  if (!isnan(lastEtage) && !isnan(lastExt)) {
-    DataStore::store(lastEtage, lastExt);
-    Serial.printf("[dash] DataStore: etage=%.1f ext=%.1f\n", lastEtage, lastExt);
-  }
+  const float* etageTemps = WeatherService::etageTemps;
+  const float* extTemps   = WeatherService::extTemps;
+  int etageValid = WeatherService::etageValid;
+  int extValid   = WeatherService::extValid;
 
   float tMin = NAN, tMax = NAN;
-  for (int i = 0; i < PANEL_W; i++) {
+  for (int i = 0; i < SCREEN_WIDTH; i++) {
     if (!isnan(etageTemps[i])) {
       if (isnan(tMin) || etageTemps[i] < tMin) tMin = etageTemps[i];
       if (isnan(tMax) || etageTemps[i] > tMax) tMax = etageTemps[i];
@@ -229,15 +227,15 @@ void Dashboard::loop() {
   Serial.printf("[dash] plage auto: tMin=%.1f tMax=%.1f\n", tMin, tMax);
 
   if (etageValid > 0 || extValid > 0)
-    drawFills(etageTemps, extTemps, PANEL_W, tMin, tMax,
+    drawFills(etageTemps, extTemps, SCREEN_WIDTH, tMin, tMax,
               Colors::blue(this->ledPanel->dma_display),
               Colors::red(this->ledPanel->dma_display));
 
-  if (etageValid > 0) drawCurve(etageTemps, PANEL_W, tMin, tMax, Colors::blue(this->ledPanel->dma_display));
-  if (extValid > 0)   drawCurve(extTemps,   PANEL_W, tMin, tMax, Colors::red(this->ledPanel->dma_display));
+  if (etageValid > 0) drawCurve(etageTemps, SCREEN_WIDTH, tMin, tMax, Colors::blue(this->ledPanel->dma_display));
+  if (extValid > 0)   drawCurve(extTemps,   SCREEN_WIDTH, tMin, tMax, Colors::red(this->ledPanel->dma_display));
 
-  drawCurrentValues(lastEtage, lastExt);
-  drawVentilation(ventIsOn);
+  drawCurrentValues(WeatherService::lastEtage, WeatherService::lastExt);
+  drawVentilation(WeatherService::ventIsOn);
 
   if (etageValid == 0 && extValid == 0) {
     this->ledPanel->dma_display->setCursor(5, 30);

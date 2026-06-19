@@ -18,16 +18,16 @@ static String getTimestamp(long hoursBack) {
   return String(buffer) + "Z";
 }
 
-String HomeAssistant::getEntityState(String entityName) {
+String HomeAssistant::getEntityState(const String& entityId) {
   HTTPClient http;
 
-  String homeAssistantURL;
-  homeAssistantURL += F("http://");
-  homeAssistantURL += SECRET_HOME_ASSISTANT_HOST;
-  homeAssistantURL += F("/api/states/");
-  homeAssistantURL += entityName;
+  String url;
+  url += F("http://");
+  url += SECRET_HOME_ASSISTANT_HOST;
+  url += F("/api/states/");
+  url += entityId;
 
-  http.begin(homeAssistantURL);
+  http.begin(url);
   http.useHTTP10(true);
   String bearer;
   bearer += F("Bearer ");
@@ -55,9 +55,9 @@ String HomeAssistant::getEntityState(String entityName) {
   return doc["state"].as<String>();
 }
 
-static void fetchHistoryChunk(String entityName, float* temps, int numPixels,
-                               long startHoursBack, long endHoursBack,
-                               long globalStartTs, long totalSeconds) {
+static void fetchChunk(const String& entityId, float* out, int outSize,
+                       long startHoursBack, long endHoursBack,
+                       long globalStartTs, long totalSeconds) {
   HTTPClient http;
 
   String url;
@@ -66,7 +66,7 @@ static void fetchHistoryChunk(String entityName, float* temps, int numPixels,
   url += F("/api/history/period/");
   url += getTimestamp(startHoursBack);
   url += F("?filter_entity_id=");
-  url += entityName;
+  url += entityId;
   url += F("&end_time=");
   url += getTimestamp(endHoursBack);
   url += F("&minimal_response");
@@ -124,54 +124,33 @@ static void fetchHistoryChunk(String entityName, float* temps, int numPixels,
     if (offset < 0) offset = 0;
     if (offset > totalSeconds) offset = totalSeconds;
 
-    int pixel = (int)((offset / (float)totalSeconds) * (numPixels - 1));
-    temps[pixel] = value;
+    int idx = (int)((offset / (float)totalSeconds) * (outSize - 1));
+    out[idx] = value;
   }
 }
 
-int HomeAssistant::getHistory(String entityName, float* temps, int numPixels, long hoursBack) {
-  Serial.printf("[ha] getHistory(%s, %ldh, %d px)\n", entityName.c_str(), hoursBack, numPixels);
+int HomeAssistant::getTimeSeries(const String& entityId, long hoursBack, float* out, int outSize) {
+  Serial.printf("[ha] getTimeSeries(%s, %ldh, %d)\n", entityId.c_str(), hoursBack, outSize);
 
-  for (int i = 0; i < numPixels; i++) temps[i] = NAN;
+  for (int i = 0; i < outSize; i++) out[i] = NAN;
 
   long now = time(NULL);
   long globalStartTs = now - hoursBack * 3600L;
-  long totalSeconds = hoursBack * 3600L;
+  long totalSeconds  = hoursBack * 3600L;
 
   const long CHUNK_HOURS = 4;
 
   for (long start = hoursBack; start > 0; start -= CHUNK_HOURS) {
     long end = start - CHUNK_HOURS;
     if (end < 0) end = 0;
-    fetchHistoryChunk(entityName, temps, numPixels, start, end, globalStartTs, totalSeconds);
+    fetchChunk(entityId, out, outSize, start, end, globalStartTs, totalSeconds);
     delay(100);
   }
 
-  // Interpolation linéaire entre les points connus
-  int lastValid = -1;
-  for (int i = 0; i < numPixels; i++) {
-    if (!isnan(temps[i])) {
-      if (lastValid >= 0 && i - lastValid > 1) {
-        float v0 = temps[lastValid];
-        float v1 = temps[i];
-        for (int j = lastValid + 1; j < i; j++) {
-          float t = (float)(j - lastValid) / (i - lastValid);
-          temps[j] = v0 + t * (v1 - v0);
-        }
-      }
-      lastValid = i;
-    }
-  }
-  // Forward-fill du dernier point connu jusqu'à la fin
-  if (lastValid >= 0) {
-    for (int i = lastValid + 1; i < numPixels; i++) temps[i] = temps[lastValid];
-  }
-
   int validCount = 0;
-  for (int i = 0; i < numPixels; i++) {
-    if (!isnan(temps[i])) validCount++;
-  }
+  for (int i = 0; i < outSize; i++)
+    if (!isnan(out[i])) validCount++;
 
-  Serial.printf("[ha] %s: %d/%d pixels valides\n", entityName.c_str(), validCount, numPixels);
+  Serial.printf("[ha] %s: %d/%d cases renseignees\n", entityId.c_str(), validCount, outSize);
   return validCount;
 }
