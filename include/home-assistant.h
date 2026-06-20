@@ -2,6 +2,7 @@
 #define HOME_ASSISTANT_H
 
 #include <Arduino.h>
+#include <time.h>
 
 class HomeAssistant {
 public:
@@ -14,6 +15,9 @@ public:
   // Retourne le nombre de points stockes (max maxPoints).
   static int getRawSeries(const String& entityId, long hoursBack,
                           long* timestamps, float* values, int maxPoints);
+  // Retourne les prochains lever/coucher du soleil depuis sun.sun.
+  // Retourne false si l'appel echoue.
+  static bool getSunTimes(time_t& nextRising, time_t& nextSetting);
 };
 
 #endif

@@ -11,6 +11,7 @@ class Dashboard {
     void drawCurve(const float* temps, int n, float tMin, float tMax, bool isInterior);
     void drawCurrentValues(float etageTemp, float extTemp);
     void drawVentilation(bool isOn);
+    void drawSolarEvents(const float* extTemps, float tMin, float tMax);
   public:
     Dashboard(LEDPanel *ledPanel);
     void setup();

@@ -153,6 +153,22 @@ static void drawCross(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+0, y+4, color); disp->drawPixel(x+4, y+4, color);
 }
 
+// Soleil 4x4 (jaune)
+static void drawSun(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+  disp->drawPixel(x+1, y+0, color); disp->drawPixel(x+2, y+0, color);
+  disp->drawPixel(x+0, y+1, color); disp->drawPixel(x+1, y+1, color); disp->drawPixel(x+2, y+1, color); disp->drawPixel(x+3, y+1, color);
+  disp->drawPixel(x+0, y+2, color); disp->drawPixel(x+1, y+2, color); disp->drawPixel(x+2, y+2, color); disp->drawPixel(x+3, y+2, color);
+  disp->drawPixel(x+1, y+3, color); disp->drawPixel(x+2, y+3, color);
+}
+
+// Lune croissant 4x4 (bleu clair) : C ouvert a droite
+static void drawMoon(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+  disp->drawPixel(x+1, y+0, color); disp->drawPixel(x+2, y+0, color); disp->drawPixel(x+3, y+0, color);
+  disp->drawPixel(x+0, y+1, color); disp->drawPixel(x+1, y+1, color);
+  disp->drawPixel(x+0, y+2, color); disp->drawPixel(x+1, y+2, color);
+  disp->drawPixel(x+1, y+3, color); disp->drawPixel(x+2, y+3, color); disp->drawPixel(x+3, y+3, color);
+}
+
 // degC en pixel art : deg (3x3) + gap (1px) + C (3x5) = 7px wide, 5px tall
 static void drawDegC(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+1, y+0, color);
@@ -270,6 +286,28 @@ void Dashboard::drawVentilation(bool isOn) {
   }
 }
 
+void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
+  auto* disp = this->ledPanel->dma_display;
+
+  auto placeIcon = [&](int xPos, bool isSun) {
+    if (xPos < 0 || xPos >= SCREEN_WIDTH) return;
+    int curveY = (!isnan(tMin) && !isnan(tMax) && !isnan(extTemps[xPos]))
+                 ? tempToY(extTemps[xPos], tMin, tMax)
+                 : SCREEN_HEIGHT / 2;
+
+    int iconX = max(0, min(SCREEN_WIDTH - 4, xPos - 2));
+    int iconY = max(0, min(SCREEN_HEIGHT - 4, curveY - 2));
+
+    if (isSun)
+      drawSun(disp, iconX, iconY, Colors::rgb(disp, 255, 220, 0));
+    else
+      drawMoon(disp, iconX, iconY, Colors::rgb(disp, 180, 210, 255));
+  };
+
+  placeIcon(WeatherService::sunriseX, true);
+  placeIcon(WeatherService::sunsetX,  false);
+}
+
 static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
   const int cx     = SCREEN_WIDTH  / 2;
   const int cy     = SCREEN_HEIGHT / 2;  // cadran centre sur l'ecran
@@ -354,6 +392,8 @@ void Dashboard::loop() {
 
   if (etageValid > 0) drawCurve(etageTemps, SCREEN_WIDTH, tMin, tMax, true);
   if (extValid > 0)   drawCurve(extTemps,   SCREEN_WIDTH, tMin, tMax, false);
+
+  if (extValid > 0) drawSolarEvents(extTemps, tMin, tMax);
 
   drawCurrentValues(WeatherService::lastEtage, WeatherService::lastExt);
   drawVentilation(WeatherService::ventIsOn);

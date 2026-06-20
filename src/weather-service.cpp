@@ -14,6 +14,8 @@ bool  WeatherService::ventIsOn   = false;
 float WeatherService::lastEtage      = NAN;
 float WeatherService::lastExt        = NAN;
 float WeatherService::crossingMinutes = NAN;
+int   WeatherService::sunriseX = -1;
+int   WeatherService::sunsetX  = -1;
 
 RTC_DATA_ATTR static int lastVentilationState = -1;
 
@@ -122,4 +124,25 @@ void WeatherService::refresh() {
     Serial.printf("[weather] derniere valeur: etage=%.1f ext=%.1f\n", lastEtage, lastExt);
 
   crossingMinutes = estimateCrossingMinutes();
+
+  Serial.println("[weather] fetch sun times...");
+  time_t nextRising = 0, nextSetting = 0;
+  if (HomeAssistant::getSunTimes(nextRising, nextSetting)) {
+    long nowTs       = (long)time(NULL);
+    long windowStart = nowTs - 24L * 3600L;
+    long windowLen   = 24L * 3600L;
+
+    auto toX = [&](time_t t) -> int {
+      long offset = (long)t - 24L * 3600L - windowStart;
+      if (offset < 0 || offset > windowLen) return -1;
+      return (int)(offset * (SCREEN_WIDTH - 1) / windowLen);
+    };
+
+    sunriseX = toX(nextRising);
+    sunsetX  = toX(nextSetting);
+    Serial.printf("[weather] sunriseX=%d sunsetX=%d\n", sunriseX, sunsetX);
+  } else {
+    sunriseX = -1;
+    sunsetX  = -1;
+  }
 }

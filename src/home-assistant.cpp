@@ -227,6 +227,62 @@ int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
   return stored;
 }
 
+bool HomeAssistant::getSunTimes(time_t& nextRising, time_t& nextSetting) {
+  HTTPClient http;
+
+  String url;
+  url += F("http://");
+  url += SECRET_HOME_ASSISTANT_HOST;
+  url += F("/api/states/sun.sun");
+
+  http.begin(url);
+  http.useHTTP10(true);
+  String bearer;
+  bearer += F("Bearer ");
+  bearer += SECRET_HOME_ASSISTANT_TOKEN;
+  http.addHeader("Authorization", bearer);
+
+  int httpCode;
+  int retry = 0;
+  do {
+    httpCode = http.GET();
+    retry++;
+  } while (httpCode <= 0 && retry < HTTP_RETRY);
+
+  if (httpCode != 200) {
+    http.end();
+    return false;
+  }
+
+  JsonDocument filter;
+  filter["attributes"]["next_rising"]  = true;
+  filter["attributes"]["next_setting"] = true;
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+
+  if (error) return false;
+
+  const char* risingStr  = doc["attributes"]["next_rising"];
+  const char* settingStr = doc["attributes"]["next_setting"];
+  if (!risingStr || !settingStr) return false;
+
+  auto parseISO = [](const char* s) -> time_t {
+    struct tm tm_info;
+    memset(&tm_info, 0, sizeof(tm_info));
+    strptime(s, "%Y-%m-%dT%H:%M:%S", &tm_info);
+    tm_info.tm_isdst = -1;
+    return (time_t)mktime(&tm_info);
+  };
+
+  nextRising  = parseISO(risingStr);
+  nextSetting = parseISO(settingStr);
+
+  Serial.printf("[ha] sun: next_rising=%s next_setting=%s\n", risingStr, settingStr);
+  return true;
+}
+
 int HomeAssistant::getTimeSeries(const String& entityId, long hoursBack, float* out, int outSize) {
   Serial.printf("[ha] getTimeSeries(%s, %ldh, %d)\n", entityId.c_str(), hoursBack, outSize);
 
