@@ -177,10 +177,19 @@ int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
   JsonArray entityHistory = result[0].as<JsonArray>();
   if (entityHistory.isNull()) return 0;
 
-  // HA renvoie les points du plus ancien au plus recent.
-  // On garde toujours les derniers maxPoints : quand le buffer est plein,
-  // on decale d'un cran et on ecrit le nouveau point a la fin.
-  int count = 0;
+  // Decoupage de la fenetre en maxPoints buckets temporels egaux.
+  // Chaque point recu est accumule dans son bucket ; on fait la moyenne a la fin.
+  // Cela garantit que tous les points recus contribuent au resultat,
+  // quelle que soit leur repartition dans le temps.
+  long tStart   = (long)time(nullptr) - hoursBack * 3600L;
+  long bucketSecs = (hoursBack * 3600L) / maxPoints;
+  if (bucketSecs < 1) bucketSecs = 1;
+
+  int cnts[maxPoints];
+  memset(cnts,   0, maxPoints * sizeof(int));
+  memset(values, 0, maxPoints * sizeof(float));
+
+  int totalReceived = 0;
   for (JsonObject state : entityHistory) {
     const char* stateStr = state["state"];
     if (!stateStr || (!isdigit((unsigned char)stateStr[0]) && stateStr[0] != '-')) continue;
@@ -195,20 +204,26 @@ int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
     long ts  = (long)mktime(&tm_info);
     float val = atof(stateStr);
 
-    if (count < maxPoints) {
-      timestamps[count] = ts;
-      values[count]     = val;
-    } else {
-      memmove(timestamps, timestamps + 1, (maxPoints - 1) * sizeof(long));
-      memmove(values,     values     + 1, (maxPoints - 1) * sizeof(float));
-      timestamps[maxPoints - 1] = ts;
-      values[maxPoints - 1]     = val;
-    }
-    count++;
+    int bucket = (int)((ts - tStart) / bucketSecs);
+    if (bucket < 0)          bucket = 0;
+    if (bucket >= maxPoints) bucket = maxPoints - 1;
+
+    values[bucket] += val;
+    cnts[bucket]++;
+    totalReceived++;
   }
 
-  int stored = min(count, maxPoints);
-  Serial.printf("[ha] getRawSeries %s: %d points stockes (total recu: %d)\n", entityId.c_str(), stored, count);
+  // Compaction : calcul de la moyenne et suppression des buckets vides.
+  int stored = 0;
+  for (int i = 0; i < maxPoints; i++) {
+    if (cnts[i] > 0) {
+      timestamps[stored] = tStart + (long)i * bucketSecs + bucketSecs / 2;
+      values[stored]     = values[i] / (float)cnts[i];
+      stored++;
+    }
+  }
+
+  Serial.printf("[ha] getRawSeries %s: %d points stockes (total recu: %d)\n", entityId.c_str(), stored, totalReceived);
   return stored;
 }
 

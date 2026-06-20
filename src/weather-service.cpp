@@ -37,7 +37,7 @@ void WeatherService::interpolate(float* series, int size) {
 
 float WeatherService::estimateCrossingMinutes() {
   const long FETCH_HOURS   = 2;
-  const long REGRESS_SECS  = 2 * 60 * 60;  // regression sur les 2 dernieres heures
+  const long REGRESS_SECS  = 80 * 60;  // regression sur la derniere 1h20
   const int  MAX_PTS       = 60;
 
   static long  etageTs[MAX_PTS], extTs[MAX_PTS];
@@ -57,7 +57,7 @@ float WeatherService::estimateCrossingMinutes() {
   int x0 = 0; while (x0 < nx && extTs[x0]   < tCutoff) x0++;
   int ne_r = ne - e0, nx_r = nx - x0;
 
-  Serial.printf("[weather] crossing: %d pts etage, %d pts ext dans les 2 dernieres heures\n", ne_r, nx_r);
+  Serial.printf("[weather] crossing: %d pts etage, %d pts ext dans la derniere 1h20\n", ne_r, nx_r);
   if (ne_r < 3 || nx_r < 3) return NAN;
 
   auto linFit = [](const long* ts, const float* vals, int n, long ref,

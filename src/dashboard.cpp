@@ -241,7 +241,7 @@ void Dashboard::drawVentilation(bool isOn) {
       if (m == 0)
         snprintf(buf, sizeof(buf), "%dh", h);
       else
-        snprintf(buf, sizeof(buf), "%dh%d", h, m);
+        snprintf(buf, sizeof(buf), "%dh%02d", h, m);
     }
 
     int arrowX = rx + 2 * pad + symSz + 2;
@@ -251,7 +251,7 @@ void Dashboard::drawVentilation(bool isOn) {
 
     uint16_t shadow = Colors::black(disp);
     uint16_t white  = Colors::white(disp);
-    const int8_t offsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+    const int8_t offsets[8][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
 
     for (auto& off : offsets)
       drawArrowRight(disp, arrowX + off[0], arrowY + off[1], shadow);
