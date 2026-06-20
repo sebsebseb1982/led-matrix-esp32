@@ -94,6 +94,18 @@ static void drawCheckmark(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t colo
   disp->drawPixel(x+1, y+3, color);
 }
 
+// Fleche droite avec queue : queue 6px + tete ">" 3px = 9px large, 5px haut (sans espace)
+static void drawArrowRight(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+  // Queue horizontale au milieu (6px, accolee au chapeau)
+  for (int i = 0; i < 6; i++) disp->drawPixel(x+i, y+2, color);
+  // Tete ">"
+  disp->drawPixel(x+6, y+0, color);
+  disp->drawPixel(x+7, y+1, color);
+  disp->drawPixel(x+8, y+2, color);
+  disp->drawPixel(x+7, y+3, color);
+  disp->drawPixel(x+6, y+4, color);
+}
+
 // Croix rouge 5x5
 static void drawCross(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+0, y+0, color); disp->drawPixel(x+4, y+0, color);
@@ -178,6 +190,46 @@ void Dashboard::drawVentilation(bool isOn) {
     drawCheckmark(disp, rx + pad, ry + pad, Colors::green(disp));
   else
     drawCross(disp, rx + pad, ry + pad, Colors::red(disp));
+
+  float crossMins = WeatherService::crossingMinutes;
+  if (!isnan(crossMins)) {
+    char buf[8];
+    int mins = (int)roundf(crossMins);
+    if (mins < 60) {
+      snprintf(buf, sizeof(buf), "%dm", mins);
+    } else {
+      int h = mins / 60;
+      int m = mins % 60;
+      if (m == 0)
+        snprintf(buf, sizeof(buf), "%dh", h);
+      else
+        snprintf(buf, sizeof(buf), "%dh%d", h, m);
+    }
+
+    int arrowX = rx + 2 * pad + symSz + 2;
+    int textX  = arrowX + 9 + 1;  // fleche 9px large (6 queue + 3 tete) + 1px gap
+    int arrowY = ry + 1;           // redescendu d'un cran
+    int y      = ry;               // texte reste a ry (aligne avec la coche)
+
+    uint16_t shadow = Colors::black(disp);
+    uint16_t white  = Colors::white(disp);
+    const int8_t offsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+
+    for (auto& off : offsets)
+      drawArrowRight(disp, arrowX + off[0], arrowY + off[1], shadow);
+    drawArrowRight(disp, arrowX, arrowY, white);
+
+    disp->setTextSize(1);
+    disp->setTextWrap(false);
+    for (auto& off : offsets) {
+      disp->setCursor(textX + off[0], y + off[1]);
+      disp->setTextColor(shadow);
+      disp->print(buf);
+    }
+    disp->setCursor(textX, y);
+    disp->setTextColor(white);
+    disp->print(buf);
+  }
 }
 
 static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {

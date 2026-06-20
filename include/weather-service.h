@@ -12,8 +12,10 @@ public:
   static bool  ventIsOn;
   static float lastEtage;
   static float lastExt;
+  static float crossingMinutes;  // NAN si pas de croisement prevu dans les 12h
 
   static void refresh();
+  static float estimateCrossingMinutes();
 
 private:
   static void interpolate(float* series, int size);

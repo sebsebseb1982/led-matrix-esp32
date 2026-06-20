@@ -129,6 +129,89 @@ static void fetchChunk(const String& entityId, float* out, int outSize,
   }
 }
 
+int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
+                                long* timestamps, float* values, int maxPoints) {
+  HTTPClient http;
+
+  String url;
+  url += F("http://");
+  url += SECRET_HOME_ASSISTANT_HOST;
+  url += F("/api/history/period/");
+  url += getTimestamp(hoursBack);
+  url += F("?filter_entity_id=");
+  url += entityId;
+  url += F("&end_time=");
+  url += getTimestamp(0);
+  url += F("&minimal_response");
+
+  http.begin(url);
+  http.useHTTP10(true);
+  String bearer;
+  bearer += F("Bearer ");
+  bearer += SECRET_HOME_ASSISTANT_TOKEN;
+  http.addHeader("Authorization", bearer);
+
+  int httpCode = http.GET();
+  if (httpCode != 200) {
+    Serial.printf("[ha] getRawSeries KO: %d\n", httpCode);
+    http.end();
+    return 0;
+  }
+
+  JsonDocument filter;
+  filter[0][0]["state"] = true;
+  filter[0][0]["last_changed"] = true;
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+
+  if (error) {
+    Serial.printf("[ha] getRawSeries deserialize failed: %s\n", error.c_str());
+    return 0;
+  }
+
+  JsonArray result = doc.as<JsonArray>();
+  if (result.isNull() || result.size() == 0) return 0;
+
+  JsonArray entityHistory = result[0].as<JsonArray>();
+  if (entityHistory.isNull()) return 0;
+
+  // HA renvoie les points du plus ancien au plus recent.
+  // On garde toujours les derniers maxPoints : quand le buffer est plein,
+  // on decale d'un cran et on ecrit le nouveau point a la fin.
+  int count = 0;
+  for (JsonObject state : entityHistory) {
+    const char* stateStr = state["state"];
+    if (!stateStr || (!isdigit((unsigned char)stateStr[0]) && stateStr[0] != '-')) continue;
+    const char* tsStr = state["last_changed"];
+    if (!tsStr) continue;
+
+    struct tm tm_info;
+    memset(&tm_info, 0, sizeof(tm_info));
+    strptime(tsStr, "%Y-%m-%dT%H:%M:%S", &tm_info);
+    tm_info.tm_isdst = -1;
+
+    long ts  = (long)mktime(&tm_info);
+    float val = atof(stateStr);
+
+    if (count < maxPoints) {
+      timestamps[count] = ts;
+      values[count]     = val;
+    } else {
+      memmove(timestamps, timestamps + 1, (maxPoints - 1) * sizeof(long));
+      memmove(values,     values     + 1, (maxPoints - 1) * sizeof(float));
+      timestamps[maxPoints - 1] = ts;
+      values[maxPoints - 1]     = val;
+    }
+    count++;
+  }
+
+  int stored = min(count, maxPoints);
+  Serial.printf("[ha] getRawSeries %s: %d points stockes (total recu: %d)\n", entityId.c_str(), stored, count);
+  return stored;
+}
+
 int HomeAssistant::getTimeSeries(const String& entityId, long hoursBack, float* out, int outSize) {
   Serial.printf("[ha] getTimeSeries(%s, %ldh, %d)\n", entityId.c_str(), hoursBack, outSize);
 
