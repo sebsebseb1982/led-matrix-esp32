@@ -17,6 +17,32 @@ int Dashboard::tempToY(float temp, float tMin, float tMax) {
   return bottomY - (int)(ratio * (bottomY - topY));
 }
 
+static uint16_t tempToColor(MatrixPanel_I2S_DMA* disp, float temp, bool isInterior) {
+  float coldStart, coldEnd, hotStart, hotEnd;
+  if (isInterior) {
+    coldStart = 16.0f; coldEnd = 19.0f;
+    hotStart  = 24.0f; hotEnd  = 27.0f;
+  } else {
+    coldStart = 12.0f; coldEnd = 15.0f;
+    hotStart  = 27.0f; hotEnd  = 30.0f;
+  }
+  uint8_t r, g, b;
+  if (temp <= coldStart) {
+    r = 0; g = 0; b = 255;
+  } else if (temp < coldEnd) {
+    float t = (temp - coldStart) / (coldEnd - coldStart);
+    r = (uint8_t)(t * 255); g = (uint8_t)(t * 255); b = 255;
+  } else if (temp <= hotStart) {
+    r = 255; g = 255; b = 255;
+  } else if (temp < hotEnd) {
+    float t = (temp - hotStart) / (hotEnd - hotStart);
+    r = 255; g = (uint8_t)((1.0f - t) * 255); b = (uint8_t)((1.0f - t) * 255);
+  } else {
+    r = 255; g = 0; b = 0;
+  }
+  return disp->color565(r, g, b);
+}
+
 static uint16_t dimColor565(uint16_t c, int div) {
   uint8_t r = ((c >> 11) & 0x1F) / div;
   uint8_t g = ((c >> 5)  & 0x3F) / div;
@@ -32,17 +58,9 @@ static uint16_t addColors565(uint16_t c1, uint16_t c2) {
 }
 
 void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
-                           int n, float tMin, float tMax,
-                           uint16_t etageColor, uint16_t extColor) {
-  // 3 niveaux : fill de base /7, ligne d'unité /4, ligne de dizaine /2
-  uint16_t dimEtage    = dimColor565(etageColor, 7);
-  uint16_t dimExt      = dimColor565(extColor,   7);
-  uint16_t decadeEtage = dimColor565(etageColor, 2);
-  uint16_t decadeExt   = dimColor565(extColor,   2);
+                           int n, float tMin, float tMax) {
   int bottomY = SCREEN_HEIGHT - 1;
 
-  // Tableau indexé par Y : 0=fill, 1=unité, 2=dizaine.
-  // Y calculé sur bottomY=63 (sans padding bas) pour autoriser les lignes dans les 4px du bas.
   int8_t gridType[SCREEN_HEIGHT] = {};
   if (!isnan(tMin) && !isnan(tMax) && tMax > tMin) {
     int firstTemp = (int)floorf(tMin / 10.0f) * 10;
@@ -52,6 +70,22 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       int y = bottomY - (int)(ratio * (bottomY - CURVE_PAD));
       if (y >= CURVE_PAD && y <= bottomY)
         gridType[y] = 2;
+    }
+  }
+
+  auto* disp = this->ledPanel->dma_display;
+
+  // Précalcul : couleur par ligne Y selon la température que cette hauteur représente
+  const int curveTopY    = CURVE_PAD;
+  const int curveBottomY = SCREEN_HEIGHT - 1 - CURVE_PAD;
+  uint16_t colorEtageAtY[SCREEN_HEIGHT] = {};
+  uint16_t colorExtAtY[SCREEN_HEIGHT]   = {};
+  if (tMax > tMin) {
+    for (int y = CURVE_PAD; y <= bottomY; y++) {
+      float ratio  = (float)(curveBottomY - y) / (float)(curveBottomY - curveTopY);
+      float tempAtY = tMin + ratio * (tMax - tMin);
+      colorEtageAtY[y] = tempToColor(disp, tempAtY, true);
+      colorExtAtY[y]   = tempToColor(disp, tempAtY, false);
     }
   }
 
@@ -66,22 +100,26 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       bool inExt   = hasExt   && y > yExt;
       if (!inEtage && !inExt) continue;
 
-      uint16_t ce = (gridType[y] == 2) ? decadeEtage : dimEtage;
-      uint16_t cx = (gridType[y] == 2) ? decadeExt   : dimExt;
+      int div = (gridType[y] == 2) ? 3 : 7;
+      uint16_t ce = dimColor565(colorEtageAtY[y], div);
+      uint16_t cx = dimColor565(colorExtAtY[y],   div);
 
-      if      (inEtage && inExt) this->ledPanel->dma_display->drawPixel(x, y, addColors565(ce, cx));
-      else if (inEtage)           this->ledPanel->dma_display->drawPixel(x, y, ce);
-      else if (inExt)             this->ledPanel->dma_display->drawPixel(x, y, cx);
+      if      (inEtage && inExt) disp->drawPixel(x, y, addColors565(ce, cx));
+      else if (inEtage)          disp->drawPixel(x, y, ce);
+      else                       disp->drawPixel(x, y, cx);
     }
   }
 }
 
-void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, uint16_t color) {
+void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, bool isInterior) {
+  auto* disp = this->ledPanel->dma_display;
   for (int x = 1; x < n; x++) {
     if (isnan(temps[x]) || isnan(temps[x - 1])) continue;
     int y0 = tempToY(temps[x - 1], tMin, tMax);
     int y1 = tempToY(temps[x], tMin, tMax);
-    this->ledPanel->dma_display->drawLine(x - 1, y0, x, y1, color);
+    float avgTemp = (temps[x - 1] + temps[x]) * 0.5f;
+    uint16_t color = tempToColor(disp, avgTemp, isInterior);
+    disp->drawLine(x - 1, y0, x, y1, color);
   }
 }
 
@@ -134,19 +172,19 @@ void Dashboard::drawCurrentValues(float etageTemp, float extTemp) {
   if (!hasEtage && !hasExt) return;
 
   float highTemp;
-  uint16_t highColor;
+  bool isInterior;
   if (hasEtage && hasExt) {
     bool etageIsHigh = etageTemp >= extTemp;
-    highTemp  = etageIsHigh ? etageTemp : extTemp;
-    highColor = etageIsHigh ? Colors::blue(this->ledPanel->dma_display)
-                            : Colors::red(this->ledPanel->dma_display);
+    highTemp   = etageIsHigh ? etageTemp : extTemp;
+    isInterior = etageIsHigh;
   } else if (hasEtage) {
-    highTemp  = etageTemp;
-    highColor = Colors::blue(this->ledPanel->dma_display);
+    highTemp   = etageTemp;
+    isInterior = true;
   } else {
-    highTemp  = extTemp;
-    highColor = Colors::red(this->ledPanel->dma_display);
+    highTemp   = extTemp;
+    isInterior = false;
   }
+  uint16_t highColor = tempToColor(this->ledPanel->dma_display, highTemp, isInterior);
 
   char buf[8];
   sprintf(buf, "%.1f", highTemp);
@@ -312,12 +350,10 @@ void Dashboard::loop() {
   Serial.printf("[dash] plage auto: tMin=%.1f tMax=%.1f\n", tMin, tMax);
 
   if (etageValid > 0 || extValid > 0)
-    drawFills(etageTemps, extTemps, SCREEN_WIDTH, tMin, tMax,
-              Colors::blue(this->ledPanel->dma_display),
-              Colors::red(this->ledPanel->dma_display));
+    drawFills(etageTemps, extTemps, SCREEN_WIDTH, tMin, tMax);
 
-  if (etageValid > 0) drawCurve(etageTemps, SCREEN_WIDTH, tMin, tMax, Colors::blue(this->ledPanel->dma_display));
-  if (extValid > 0)   drawCurve(extTemps,   SCREEN_WIDTH, tMin, tMax, Colors::red(this->ledPanel->dma_display));
+  if (etageValid > 0) drawCurve(etageTemps, SCREEN_WIDTH, tMin, tMax, true);
+  if (extValid > 0)   drawCurve(extTemps,   SCREEN_WIDTH, tMin, tMax, false);
 
   drawCurrentValues(WeatherService::lastEtage, WeatherService::lastExt);
   drawVentilation(WeatherService::ventIsOn);

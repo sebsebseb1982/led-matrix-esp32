@@ -7,8 +7,8 @@ class Dashboard {
   private:
     LEDPanel *ledPanel;
     int tempToY(float temp, float tMin, float tMax);
-    void drawFills(const float* etageTemps, const float* extTemps, int n, float tMin, float tMax, uint16_t etageColor, uint16_t extColor);
-    void drawCurve(const float* temps, int n, float tMin, float tMax, uint16_t color);
+    void drawFills(const float* etageTemps, const float* extTemps, int n, float tMin, float tMax);
+    void drawCurve(const float* temps, int n, float tMin, float tMax, bool isInterior);
     void drawCurrentValues(float etageTemp, float extTemp);
     void drawVentilation(bool isOn);
   public:
