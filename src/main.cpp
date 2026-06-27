@@ -1,10 +1,12 @@
 #include <esp_sleep.h>
+#include <time.h>
 #include "wifi-connection.h"
 #include "led-panel.h"
 #include "dashboard.h"
 #include "brightness.h"
 #include "buzzer.h"
 #include "pir-sensor.h"
+#include "weather-service.h"
 
 LEDPanel ledPanel(8);
 Dashboard dashboard(&ledPanel);
@@ -43,6 +45,15 @@ void loop() {
 
   if (now - lastActivity >= SLEEP_TIMEOUT_MS) {
     Serial.println("[main] Deep sleep...");
+
+    long nowUnix   = (long)time(NULL);
+    long wakeUnix  = WeatherService::getCrossingUnixTs();
+    long sleepSecs = (wakeUnix > nowUnix) ? (wakeUnix - nowUnix) : 0L;
+    if (sleepSecs > 60) {
+      Serial.printf("[main] Timer wakeup dans %ldmin pour croisement courbes\n", sleepSecs / 60);
+      esp_sleep_enable_timer_wakeup((uint64_t)sleepSecs * 1000000ULL);
+    }
+
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, HIGH);
     esp_deep_sleep_start();
   }

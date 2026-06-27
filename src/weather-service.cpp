@@ -17,7 +17,8 @@ float WeatherService::crossingMinutes = NAN;
 int   WeatherService::sunriseX = -1;
 int   WeatherService::sunsetX  = -1;
 
-RTC_DATA_ATTR static int lastVentilationState = -1;
+RTC_DATA_ATTR static int  lastVentilationState = -1;
+RTC_DATA_ATTR static long crossingUnixTs       = 0;  // timestamp absolu du prochain croisement prevu
 
 void WeatherService::interpolate(float* series, int size) {
   int lastValid = -1;
@@ -93,6 +94,8 @@ float WeatherService::estimateCrossingMinutes() {
   return (float)(t_cross / 60.0);
 }
 
+long WeatherService::getCrossingUnixTs() { return crossingUnixTs; }
+
 void WeatherService::refresh() {
   Serial.println("[weather] fetch temperature_etage...");
   etageValid = HomeAssistant::getTimeSeries("sensor.temperature_etage", HISTORY_HOURS, etageTemps, SCREEN_WIDTH);
@@ -124,6 +127,11 @@ void WeatherService::refresh() {
     Serial.printf("[weather] derniere valeur: etage=%.1f ext=%.1f\n", lastEtage, lastExt);
 
   crossingMinutes = estimateCrossingMinutes();
+  crossingUnixTs  = !isnan(crossingMinutes)
+                    ? (long)time(NULL) + (long)(crossingMinutes * 60.0f)
+                    : 0L;
+  if (crossingUnixTs)
+    Serial.printf("[weather] wakeup timer prevu a unix=%ld (dans %.1fmin)\n", crossingUnixTs, crossingMinutes);
 
   Serial.println("[weather] fetch sun times...");
   time_t nextRising = 0, nextSetting = 0;

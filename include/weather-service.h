@@ -18,6 +18,7 @@ public:
 
   static void refresh();
   static float estimateCrossingMinutes();
+  static long getCrossingUnixTs();
 
 private:
   static void interpolate(float* series, int size);
