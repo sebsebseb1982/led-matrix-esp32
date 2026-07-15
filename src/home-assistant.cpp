@@ -78,7 +78,13 @@ static void fetchChunk(const String& entityId, float* out, int outSize,
   bearer += SECRET_HOME_ASSISTANT_TOKEN;
   http.addHeader("Authorization", bearer);
 
-  int httpCode = http.GET();
+  int httpCode;
+  int retry = 0;
+  do {
+    httpCode = http.GET();
+    retry++;
+  } while (httpCode <= 0 && retry < HTTP_RETRY);
+
   if (httpCode != 200) {
     Serial.printf("[ha] chunk KO: %d\n", httpCode);
     http.end();
@@ -151,7 +157,13 @@ int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
   bearer += SECRET_HOME_ASSISTANT_TOKEN;
   http.addHeader("Authorization", bearer);
 
-  int httpCode = http.GET();
+  int httpCode;
+  int retry = 0;
+  do {
+    httpCode = http.GET();
+    retry++;
+  } while (httpCode != 200 && retry < HTTP_RETRY);
+
   if (httpCode != 200) {
     Serial.printf("[ha] getRawSeries KO: %d\n", httpCode);
     http.end();

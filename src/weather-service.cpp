@@ -46,22 +46,48 @@ float WeatherService::estimateCrossingMinutes() {
   static long  etageTs[MAX_PTS], extTs[MAX_PTS];
   static float etageVals[MAX_PTS], extVals[MAX_PTS];
 
-  int ne = HomeAssistant::getRawSeries("sensor.temperature_etage", FETCH_HOURS, etageTs, etageVals, MAX_PTS);
+  int ne = HomeAssistant::getRawSeries("sensor.domo_etage", FETCH_HOURS, etageTs, etageVals, MAX_PTS);
   int nx = HomeAssistant::getRawSeries("sensor.domo_ext_rieur",    FETCH_HOURS, extTs,   extVals,   MAX_PTS);
 
-  if (ne < 2 || nx < 2) return NAN;
+  Serial.printf("[cross] etage=%d pts, ext=%d pts (sur %dh)\n", ne, nx, (int)FETCH_HOURS);
+  if (ne < 2 || nx < 2) {
+    Serial.println("[cross] ABANDON: pas assez de points");
+    return NAN;
+  }
 
   // tRef = timestamp le plus recent des deux capteurs
   long tRef    = max(etageTs[ne - 1], extTs[nx - 1]);
   long tCutoff = tRef - REGRESS_SECS;
+  long nowTs   = (long)time(NULL);
+  Serial.printf("[cross] tRef=now-%lds  fenetre regression: [now-%lds .. now-%lds]\n",
+                nowTs - tRef, nowTs - tCutoff, nowTs - tRef);
 
-  // Trouver le premier point dans la fenetre de 30 min pour chaque capteur
+  // Trouver le premier point dans la fenetre de regression pour chaque capteur
   int e0 = 0; while (e0 < ne && etageTs[e0] < tCutoff) e0++;
   int x0 = 0; while (x0 < nx && extTs[x0]   < tCutoff) x0++;
   int ne_r = ne - e0, nx_r = nx - x0;
 
-  Serial.printf("[weather] crossing: %d pts etage, %d pts ext dans la derniere 1h20\n", ne_r, nx_r);
-  if (ne_r < 3 || nx_r < 3) return NAN;
+  // Capteur etage tres peu bavard: fallback sur toute la fenetre 2h si la fenetre courte est vide
+  if (ne_r < 2) {
+    Serial.println("[cross] etage: fenetre vide, fallback sur 2h complet");
+    e0 = 0;
+    ne_r = ne;
+  }
+
+  Serial.printf("[cross] pts dans fenetre: etage=%d, ext=%d\n", ne_r, nx_r);
+  if (ne_r > 0)
+    Serial.printf("[cross] etage: premier=%.2f(@now-%lds) dernier=%.2f(@now-%lds)\n",
+                  etageVals[e0], nowTs - etageTs[e0],
+                  etageVals[ne-1], nowTs - etageTs[ne-1]);
+  if (nx_r > 0)
+    Serial.printf("[cross] ext:   premier=%.2f(@now-%lds) dernier=%.2f(@now-%lds)\n",
+                  extVals[x0], nowTs - extTs[x0],
+                  extVals[nx-1], nowTs - extTs[nx-1]);
+
+  if (ne_r < 2 || nx_r < 3) {
+    Serial.println("[cross] ABANDON: pas assez de pts dans la fenetre");
+    return NAN;
+  }
 
   auto linFit = [](const long* ts, const float* vals, int n, long ref,
                    double& slope, double& intercept) -> bool {
@@ -79,18 +105,37 @@ float WeatherService::estimateCrossingMinutes() {
   };
 
   double ae, be, ax, bx;
-  if (!linFit(etageTs + e0, etageVals + e0, ne_r, tRef, ae, be)) return NAN;
-  if (!linFit(extTs   + x0, extVals   + x0, nx_r, tRef, ax, bx)) return NAN;
+  if (!linFit(etageTs + e0, etageVals + e0, ne_r, tRef, ae, be)) {
+    Serial.println("[cross] ABANDON: linFit etage degenere");
+    return NAN;
+  }
+  if (!linFit(extTs + x0, extVals + x0, nx_r, tRef, ax, bx)) {
+    Serial.println("[cross] ABANDON: linFit ext degenere");
+    return NAN;
+  }
+
+  Serial.printf("[cross] regression: etage=%.2f + %.5f*t (%.3f°C/h)\n", be, ae, ae * 3600.0);
+  Serial.printf("[cross] regression: ext  =%.2f + %.5f*t (%.3f°C/h)\n", bx, ax, ax * 3600.0);
 
   // Croisement : ae*t + be = ax*t + bx  =>  t = (bx - be) / (ae - ax)  (secondes depuis tRef)
   double da = ae - ax;
-  if (fabs(da) < 1e-9) return NAN;
+  Serial.printf("[cross] da=%.6f (etage-ext pente diff: %.4f°C/h)\n", da, da * 3600.0);
+  if (fabs(da) < 1e-9) {
+    Serial.println("[cross] ABANDON: pentes paralleles");
+    return NAN;
+  }
   double t_cross = (bx - be) / da;
 
-  Serial.printf("[weather] crossing: etage=%.2f+%.5f*t  ext=%.2f+%.5f*t  => t=%.0fs (%.1fmin)\n",
-                be, ae, bx, ax, t_cross, t_cross / 60.0);
-
-  if (t_cross <= 0.0 || t_cross > 12.0 * 3600.0) return NAN;
+  Serial.printf("[cross] t_cross=%.0fs (%.1fmin / %.2fh)\n", t_cross, t_cross / 60.0, t_cross / 3600.0);
+  if (t_cross <= 0.0) {
+    Serial.println("[cross] ABANDON: croisement dans le passe");
+    return NAN;
+  }
+  if (t_cross > 12.0 * 3600.0) {
+    Serial.printf("[cross] ABANDON: croisement trop loin (> 12h)\n");
+    return NAN;
+  }
+  Serial.printf("[cross] OK: croisement dans %.1fmin\n", t_cross / 60.0);
   return (float)(t_cross / 60.0);
 }
 
@@ -98,7 +143,7 @@ long WeatherService::getCrossingUnixTs() { return crossingUnixTs; }
 
 void WeatherService::refresh() {
   Serial.println("[weather] fetch temperature_etage...");
-  etageValid = HomeAssistant::getTimeSeries("sensor.temperature_etage", HISTORY_HOURS, etageTemps, SCREEN_WIDTH);
+  etageValid = HomeAssistant::getTimeSeries("sensor.domo_etage", HISTORY_HOURS, etageTemps, SCREEN_WIDTH);
   interpolate(etageTemps, SCREEN_WIDTH);
   Serial.printf("[weather] etage: %d points valides\n", etageValid);
 
