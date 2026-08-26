@@ -1,6 +1,5 @@
 #include "led-panel.h"
 #include "colors.h"
-#include "pir-sensor.h"
 
 LEDPanel::LEDPanel(int toto) {
   // Module configuration
@@ -24,21 +23,4 @@ void LEDPanel::setup() {
   dma_display->setBrightness8(10);  //0-255
   dma_display->clearScreen();
   dma_display->fillScreen(Colors::black(dma_display));
-}
-
-void LEDPanel::loop() {
-  if (PIRSensor::isTriggered()) {
-    this->wakeUp();
-  }
-  if (isStandby()) {
-    dma_display->clearScreen();
-  }
-}
-
-bool LEDPanel::isStandby() {
-  return millis() > this->nextStandbyInMs;
-}
-
-void LEDPanel::wakeUp() {
-  this->nextStandbyInMs = millis() + (standbyDelayInSeconds * 1000);
 }

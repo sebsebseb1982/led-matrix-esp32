@@ -13,7 +13,7 @@ Dashboard dashboard(&ledPanel);
 Brightness brightness(&ledPanel);
 
 #define REFRESH_INTERVAL_MS  10000UL
-#define SLEEP_TIMEOUT_MS     300000UL  // 5 minutes d'inactivité PIR
+#define SLEEP_TIMEOUT_MS     180000UL  // 3 minutes d'inactivité PIR
 
 unsigned long lastRefresh = 0;
 unsigned long lastActivity = 0;

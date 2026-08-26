@@ -1,5 +1,6 @@
 #include "dashboard.h"
 #include "colors.h"
+#include "common.h"
 #include "weather-service.h"
 #include <Arduino.h>
 #include <time.h>
@@ -308,6 +309,38 @@ void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
   placeIcon(WeatherService::sunsetX,  false);
 }
 
+void Dashboard::drawCrossingDebug(float tMin, float tMax) {
+  if (!WeatherService::debugCrossingValid) return;
+  auto* disp = this->ledPanel->dma_display;
+  uint16_t green = Colors::green(disp);
+
+  long nowTs       = (long)time(NULL);
+  long windowStart = nowTs - 24L * 3600L;
+  auto toX = [&](long ts) -> int {
+    long offset = ts - windowStart;
+    if (offset < 0)             offset = 0;
+    if (offset > 24L * 3600L)   offset = 24L * 3600L;
+    return (int)((offset * (long)(SCREEN_WIDTH - 1)) / (24L * 3600L));
+  };
+
+  // Ligne verticale pointillee : debut de la fenetre de regression du croisement
+  int lineX = toX(WeatherService::debugCrossingWindowStartTs);
+  for (int y = CURVE_PAD; y <= SCREEN_HEIGHT - 1; y += 2)
+    disp->drawPixel(lineX, y, green);
+
+  // Points consideres pour le calcul du croisement
+  for (int i = 0; i < WeatherService::debugEtagePtsCount; i++) {
+    int x = toX(WeatherService::debugEtagePtsTs[i]);
+    int y = tempToY(WeatherService::debugEtagePtsVal[i], tMin, tMax);
+    disp->drawPixel(x, y, green);
+  }
+  for (int i = 0; i < WeatherService::debugExtPtsCount; i++) {
+    int x = toX(WeatherService::debugExtPtsTs[i]);
+    int y = tempToY(WeatherService::debugExtPtsVal[i], tMin, tMax);
+    disp->drawPixel(x, y, green);
+  }
+}
+
 static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
   const int cx     = SCREEN_WIDTH  / 2;
   const int cy     = SCREEN_HEIGHT / 2;  // cadran centre sur l'ecran
@@ -393,7 +426,11 @@ void Dashboard::loop() {
   if (etageValid > 0) drawCurve(etageTemps, SCREEN_WIDTH, tMin, tMax, true);
   if (extValid > 0)   drawCurve(extTemps,   SCREEN_WIDTH, tMin, tMax, false);
 
-  if (extValid > 0) drawSolarEvents(extTemps, tMin, tMax);
+  if (DEBUG_CROSSING_ESTIMATION) {
+    drawCrossingDebug(tMin, tMax);
+  } else if (extValid > 0) {
+    drawSolarEvents(extTemps, tMin, tMax);
+  }
 
   drawCurrentValues(WeatherService::lastEtage, WeatherService::lastExt);
   drawVentilation(WeatherService::ventIsOn);

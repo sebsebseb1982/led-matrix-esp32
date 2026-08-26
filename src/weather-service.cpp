@@ -17,6 +17,15 @@ float WeatherService::crossingMinutes = NAN;
 int   WeatherService::sunriseX = -1;
 int   WeatherService::sunsetX  = -1;
 
+bool  WeatherService::debugCrossingValid         = false;
+long  WeatherService::debugCrossingWindowStartTs = 0;
+int   WeatherService::debugEtagePtsCount         = 0;
+long  WeatherService::debugEtagePtsTs[WeatherService::CROSSING_DEBUG_MAX_PTS];
+float WeatherService::debugEtagePtsVal[WeatherService::CROSSING_DEBUG_MAX_PTS];
+int   WeatherService::debugExtPtsCount           = 0;
+long  WeatherService::debugExtPtsTs[WeatherService::CROSSING_DEBUG_MAX_PTS];
+float WeatherService::debugExtPtsVal[WeatherService::CROSSING_DEBUG_MAX_PTS];
+
 RTC_DATA_ATTR static int  lastVentilationState = -1;
 RTC_DATA_ATTR static long crossingUnixTs       = 0;  // timestamp absolu du prochain croisement prevu
 
@@ -39,9 +48,11 @@ void WeatherService::interpolate(float* series, int size) {
 }
 
 float WeatherService::estimateCrossingMinutes() {
-  const long FETCH_HOURS   = 2;
-  const long REGRESS_SECS  = 80 * 60;  // regression sur la derniere 1h20
-  const int  MAX_PTS       = 60;
+  const long FETCH_HOURS   = 3;
+  const long REGRESS_SECS  = 160 * 60;  // regression sur la derniere 2h40 (x2)
+  const int  MAX_PTS       = CROSSING_DEBUG_MAX_PTS;
+
+  debugCrossingValid = false;
 
   static long  etageTs[MAX_PTS], extTs[MAX_PTS];
   static float etageVals[MAX_PTS], extVals[MAX_PTS];
@@ -67,9 +78,9 @@ float WeatherService::estimateCrossingMinutes() {
   int x0 = 0; while (x0 < nx && extTs[x0]   < tCutoff) x0++;
   int ne_r = ne - e0, nx_r = nx - x0;
 
-  // Capteur etage tres peu bavard: fallback sur toute la fenetre 2h si la fenetre courte est vide
+  // Capteur etage tres peu bavard: fallback sur toute la fenetre FETCH_HOURS si la fenetre courte est vide
   if (ne_r < 2) {
-    Serial.println("[cross] etage: fenetre vide, fallback sur 2h complet");
+    Serial.printf("[cross] etage: fenetre vide, fallback sur %dh complet\n", (int)FETCH_HOURS);
     e0 = 0;
     ne_r = ne;
   }
@@ -88,6 +99,19 @@ float WeatherService::estimateCrossingMinutes() {
     Serial.println("[cross] ABANDON: pas assez de pts dans la fenetre");
     return NAN;
   }
+
+  debugCrossingWindowStartTs = min(etageTs[e0], extTs[x0]);
+  debugEtagePtsCount = min(ne_r, CROSSING_DEBUG_MAX_PTS);
+  for (int i = 0; i < debugEtagePtsCount; i++) {
+    debugEtagePtsTs[i]  = etageTs[e0 + i];
+    debugEtagePtsVal[i] = etageVals[e0 + i];
+  }
+  debugExtPtsCount = min(nx_r, CROSSING_DEBUG_MAX_PTS);
+  for (int i = 0; i < debugExtPtsCount; i++) {
+    debugExtPtsTs[i]  = extTs[x0 + i];
+    debugExtPtsVal[i] = extVals[x0 + i];
+  }
+  debugCrossingValid = true;
 
   auto linFit = [](const long* ts, const float* vals, int n, long ref,
                    double& slope, double& intercept) -> bool {
