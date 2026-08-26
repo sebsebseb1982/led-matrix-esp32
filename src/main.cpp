@@ -8,7 +8,7 @@
 #include "pir-sensor.h"
 #include "weather-service.h"
 
-LEDPanel ledPanel(8);
+LEDPanel ledPanel;
 Dashboard dashboard(&ledPanel);
 Brightness brightness(&ledPanel);
 
@@ -21,10 +21,8 @@ unsigned long lastActivity = 0;
 void setup() {
   Serial.begin(115200);
   ledPanel.setup();
-  dashboard.setup();
   dashboard.showLoading();
   WiFiConnection::setup();
-  brightness.setup();
   Buzzer::setup();
   PIRSensor::setup();
 
@@ -35,8 +33,6 @@ void setup() {
 }
 
 void loop() {
-  Buzzer::loop();
-
   unsigned long now = millis();
 
   if (PIRSensor::isTriggered()) {
@@ -49,7 +45,9 @@ void loop() {
     long nowUnix   = (long)time(NULL);
     long wakeUnix  = WeatherService::getCrossingUnixTs();
     long sleepSecs = (wakeUnix > nowUnix) ? (wakeUnix - nowUnix) : 0L;
-    if (sleepSecs > 60) {
+    // > 0 et non > 60 : un croisement imminent est justement celui qu'il ne
+    // faut pas rater, or l'ancien seuil le laissait dormir jusqu'au prochain PIR.
+    if (sleepSecs > 0) {
       Serial.printf("[main] Timer wakeup dans %ldmin pour croisement courbes\n", sleepSecs / 60);
       esp_sleep_enable_timer_wakeup((uint64_t)sleepSecs * 1000000ULL);
     }
@@ -59,8 +57,11 @@ void loop() {
   }
 
   if (now - lastRefresh >= REFRESH_INTERVAL_MS) {
-    lastRefresh = now;
+    WiFiConnection::loop();
     brightness.loop();
     dashboard.loop();
+    // Apres le refresh : il bloque plusieurs secondes, partir du "now" d'avant
+    // ferait repartir un cycle immediatement des qu'il depasse l'intervalle.
+    lastRefresh = millis();
   }
 }

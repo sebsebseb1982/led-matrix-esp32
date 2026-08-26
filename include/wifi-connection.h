@@ -5,8 +5,8 @@
 
 class WiFiConnection {
   public:
-    static unsigned int nbConnection;
     static void setup();
+    // Reconnecte si le lien est tombe. A appeler avant chaque cycle de fetch.
     static void loop();
 };
 

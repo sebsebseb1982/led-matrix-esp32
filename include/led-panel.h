@@ -10,7 +10,7 @@
 class LEDPanel {
   public:
     MatrixPanel_I2S_DMA* dma_display;
-    LEDPanel(int toto);
+    LEDPanel();
     void setup();
 };
 

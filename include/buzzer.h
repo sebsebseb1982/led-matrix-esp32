@@ -4,16 +4,14 @@
 #include <Arduino.h>
 
 class Buzzer {
-  private:
-    static unsigned long stopBeepMillis;
-    static unsigned int currentLevel;
   public:
     static void setup();
     static void on();
     static void off();
-    static void beep(unsigned int durationInMs);
+    // Bloquant (~3 x duree + 200 ms). Appele une fois par changement d'etat de
+    // la ventilation, depuis un refresh deja bloquant : pas de quoi sortir
+    // l'artillerie non bloquante.
     static void beepbeepbeep(unsigned int beepDurationInMs);
-    static void loop();
 };
 
 #endif

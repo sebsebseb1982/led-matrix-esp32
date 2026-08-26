@@ -6,6 +6,15 @@
 
 #define HISTORY_HOURS 24
 
+// ponytail: 64 px pour 24 h = une colonne change toutes les 22 min. Refetcher
+// l'historique (12 requetes), le croisement (2) et le soleil (1) toutes les
+// 10 s etait ~30x plus souvent qu'ils ne peuvent bouger. Seule la ventilation,
+// qui declenche le buzzer, reste relue a chaque cycle.
+#define SLOW_REFRESH_MS (5UL * 60 * 1000)
+
+// Nombre de points bruts conserves pour la regression du croisement.
+static const int CROSSING_MAX_PTS = 60;
+
 float WeatherService::etageTemps[SCREEN_WIDTH];
 float WeatherService::extTemps[SCREEN_WIDTH];
 int   WeatherService::etageValid = 0;
@@ -16,15 +25,6 @@ float WeatherService::lastExt        = NAN;
 float WeatherService::crossingMinutes = NAN;
 int   WeatherService::sunriseX = -1;
 int   WeatherService::sunsetX  = -1;
-
-bool  WeatherService::debugCrossingValid         = false;
-long  WeatherService::debugCrossingWindowStartTs = 0;
-int   WeatherService::debugEtagePtsCount         = 0;
-long  WeatherService::debugEtagePtsTs[WeatherService::CROSSING_DEBUG_MAX_PTS];
-float WeatherService::debugEtagePtsVal[WeatherService::CROSSING_DEBUG_MAX_PTS];
-int   WeatherService::debugExtPtsCount           = 0;
-long  WeatherService::debugExtPtsTs[WeatherService::CROSSING_DEBUG_MAX_PTS];
-float WeatherService::debugExtPtsVal[WeatherService::CROSSING_DEBUG_MAX_PTS];
 
 RTC_DATA_ATTR static int  lastVentilationState = -1;
 RTC_DATA_ATTR static long crossingUnixTs       = 0;  // timestamp absolu du prochain croisement prevu
@@ -50,15 +50,13 @@ void WeatherService::interpolate(float* series, int size) {
 float WeatherService::estimateCrossingMinutes() {
   const long FETCH_HOURS   = 3;
   const long REGRESS_SECS  = 160 * 60;  // regression sur la derniere 2h40 (x2)
-  const int  MAX_PTS       = CROSSING_DEBUG_MAX_PTS;
-
-  debugCrossingValid = false;
+  const int  MAX_PTS       = CROSSING_MAX_PTS;
 
   static long  etageTs[MAX_PTS], extTs[MAX_PTS];
   static float etageVals[MAX_PTS], extVals[MAX_PTS];
 
   int ne = HomeAssistant::getRawSeries("sensor.domo_etage", FETCH_HOURS, etageTs, etageVals, MAX_PTS);
-  int nx = HomeAssistant::getRawSeries("sensor.domo_ext_rieur",    FETCH_HOURS, extTs,   extVals,   MAX_PTS);
+  int nx = HomeAssistant::getRawSeries("sensor.domo_ext_rieur", FETCH_HOURS, extTs, extVals, MAX_PTS);
 
   Serial.printf("[cross] etage=%d pts, ext=%d pts (sur %dh)\n", ne, nx, (int)FETCH_HOURS);
   if (ne < 2 || nx < 2) {
@@ -86,32 +84,10 @@ float WeatherService::estimateCrossingMinutes() {
   }
 
   Serial.printf("[cross] pts dans fenetre: etage=%d, ext=%d\n", ne_r, nx_r);
-  if (ne_r > 0)
-    Serial.printf("[cross] etage: premier=%.2f(@now-%lds) dernier=%.2f(@now-%lds)\n",
-                  etageVals[e0], nowTs - etageTs[e0],
-                  etageVals[ne-1], nowTs - etageTs[ne-1]);
-  if (nx_r > 0)
-    Serial.printf("[cross] ext:   premier=%.2f(@now-%lds) dernier=%.2f(@now-%lds)\n",
-                  extVals[x0], nowTs - extTs[x0],
-                  extVals[nx-1], nowTs - extTs[nx-1]);
-
   if (ne_r < 2 || nx_r < 3) {
     Serial.println("[cross] ABANDON: pas assez de pts dans la fenetre");
     return NAN;
   }
-
-  debugCrossingWindowStartTs = min(etageTs[e0], extTs[x0]);
-  debugEtagePtsCount = min(ne_r, CROSSING_DEBUG_MAX_PTS);
-  for (int i = 0; i < debugEtagePtsCount; i++) {
-    debugEtagePtsTs[i]  = etageTs[e0 + i];
-    debugEtagePtsVal[i] = etageVals[e0 + i];
-  }
-  debugExtPtsCount = min(nx_r, CROSSING_DEBUG_MAX_PTS);
-  for (int i = 0; i < debugExtPtsCount; i++) {
-    debugExtPtsTs[i]  = extTs[x0 + i];
-    debugExtPtsVal[i] = extVals[x0 + i];
-  }
-  debugCrossingValid = true;
 
   auto linFit = [](const long* ts, const float* vals, int n, long ref,
                    double& slope, double& intercept) -> bool {
@@ -166,60 +142,79 @@ float WeatherService::estimateCrossingMinutes() {
 long WeatherService::getCrossingUnixTs() { return crossingUnixTs; }
 
 void WeatherService::refresh() {
-  Serial.println("[weather] fetch temperature_etage...");
-  etageValid = HomeAssistant::getTimeSeries("sensor.domo_etage", HISTORY_HOURS, etageTemps, SCREEN_WIDTH);
-  interpolate(etageTemps, SCREEN_WIDTH);
-  Serial.printf("[weather] etage: %d points valides\n", etageValid);
+  static unsigned long lastSlowMs = 0;
 
-  Serial.println("[weather] fetch domo_ext_rieur...");
-  extValid = HomeAssistant::getTimeSeries("sensor.domo_ext_rieur", HISTORY_HOURS, extTemps, SCREEN_WIDTH);
-  interpolate(extTemps, SCREEN_WIDTH);
-  Serial.printf("[weather] ext: %d points valides\n", extValid);
+  // Historique 24 h, croisement et positions solaires : tout ce qui ne peut pas
+  // bouger en moins de quelques minutes.
+  if (lastSlowMs == 0 || millis() - lastSlowMs >= SLOW_REFRESH_MS) {
+    Serial.println("[weather] fetch temperature_etage...");
+    etageValid = HomeAssistant::getTimeSeries("sensor.domo_etage", HISTORY_HOURS, etageTemps, SCREEN_WIDTH);
+    Serial.printf("[weather] etage: %d points valides\n", etageValid);
 
+    Serial.println("[weather] fetch domo_ext_rieur...");
+    extValid = HomeAssistant::getTimeSeries("sensor.domo_ext_rieur", HISTORY_HOURS, extTemps, SCREEN_WIDTH);
+    Serial.printf("[weather] ext: %d points valides\n", extValid);
+
+    // Derniere valeur lue avant interpolation, tant que les NAN distinguent
+    // encore une mesure reelle d'une case bouchee.
+    lastEtage = NAN;
+    lastExt   = NAN;
+    for (int i = SCREEN_WIDTH - 1; i >= 0; i--) {
+      if (isnan(lastEtage) && !isnan(etageTemps[i])) lastEtage = etageTemps[i];
+      if (isnan(lastExt)   && !isnan(extTemps[i]))   lastExt   = extTemps[i];
+      if (!isnan(lastEtage) && !isnan(lastExt)) break;
+    }
+    Serial.printf("[weather] derniere valeur: etage=%.1f ext=%.1f\n", lastEtage, lastExt);
+
+    interpolate(etageTemps, SCREEN_WIDTH);
+    interpolate(extTemps, SCREEN_WIDTH);
+
+    crossingMinutes = estimateCrossingMinutes();
+    crossingUnixTs  = !isnan(crossingMinutes)
+                      ? (long)time(NULL) + (long)(crossingMinutes * 60.0f)
+                      : 0L;
+    if (crossingUnixTs)
+      Serial.printf("[weather] wakeup timer prevu a unix=%ld (dans %.1fmin)\n", crossingUnixTs, crossingMinutes);
+
+    Serial.println("[weather] fetch sun times...");
+    time_t nextRising = 0, nextSetting = 0;
+    if (HomeAssistant::getSunTimes(nextRising, nextSetting)) {
+      const long windowLen = 24L * 3600L;
+      long nowTs = (long)time(NULL);
+
+      // next_rising/next_setting sont dans le futur ; le meme evenement d'hier
+      // s'est produit 24 h plus tot, soit a (t - now) apres le debut de la
+      // fenetre [now-24h, now]. D'ou l'offset direct, sans passer par windowStart.
+      auto toX = [&](time_t t) -> int {
+        long offset = (long)t - nowTs;
+        if (offset < 0 || offset > windowLen) return -1;
+        return (int)(offset * (SCREEN_WIDTH - 1) / windowLen);
+      };
+
+      sunriseX = toX(nextRising);
+      sunsetX  = toX(nextSetting);
+      Serial.printf("[weather] sunriseX=%d sunsetX=%d\n", sunriseX, sunsetX);
+    } else {
+      sunriseX = -1;
+      sunsetX  = -1;
+    }
+
+    lastSlowMs = millis();
+  }
+
+  // Ventilation : relue a chaque cycle, c'est le seul etat qui doit etre vu vite
+  // (il declenche le buzzer).
   Serial.println("[weather] fetch etat_ventilation...");
   String ventStr = HomeAssistant::getEntityState("input_boolean.etat_ventilation");
   Serial.printf("[weather] ventilation: %s\n", ventStr.c_str());
-  bool newVentIsOn = (ventStr == "on");
-  if (lastVentilationState != -1 && (bool)lastVentilationState != newVentIsOn)
-    Buzzer::beepbeepbeep(newVentIsOn ? 50 : 200);
-  lastVentilationState = newVentIsOn ? 1 : 0;
-  ventIsOn = newVentIsOn;
 
-  lastEtage = NAN;
-  lastExt   = NAN;
-  for (int i = SCREEN_WIDTH - 1; i >= 0; i--) {
-    if (isnan(lastEtage) && !isnan(etageTemps[i])) lastEtage = etageTemps[i];
-    if (isnan(lastExt)   && !isnan(extTemps[i]))   lastExt   = extTemps[i];
-    if (!isnan(lastEtage) && !isnan(lastExt)) break;
-  }
-  if (!isnan(lastEtage) && !isnan(lastExt))
-    Serial.printf("[weather] derniere valeur: etage=%.1f ext=%.1f\n", lastEtage, lastExt);
-
-  crossingMinutes = estimateCrossingMinutes();
-  crossingUnixTs  = !isnan(crossingMinutes)
-                    ? (long)time(NULL) + (long)(crossingMinutes * 60.0f)
-                    : 0L;
-  if (crossingUnixTs)
-    Serial.printf("[weather] wakeup timer prevu a unix=%ld (dans %.1fmin)\n", crossingUnixTs, crossingMinutes);
-
-  Serial.println("[weather] fetch sun times...");
-  time_t nextRising = 0, nextSetting = 0;
-  if (HomeAssistant::getSunTimes(nextRising, nextSetting)) {
-    long nowTs       = (long)time(NULL);
-    long windowStart = nowTs - 24L * 3600L;
-    long windowLen   = 24L * 3600L;
-
-    auto toX = [&](time_t t) -> int {
-      long offset = (long)t - 24L * 3600L - windowStart;
-      if (offset < 0 || offset > windowLen) return -1;
-      return (int)(offset * (SCREEN_WIDTH - 1) / windowLen);
-    };
-
-    sunriseX = toX(nextRising);
-    sunsetX  = toX(nextSetting);
-    Serial.printf("[weather] sunriseX=%d sunsetX=%d\n", sunriseX, sunsetX);
-  } else {
-    sunriseX = -1;
-    sunsetX  = -1;
+  // "?" = appel echoue. Le lire comme "off" ferait biper le buzzer a chaque
+  // coupure reseau : on garde l'etat precedent.
+  if (ventStr != "?") {
+    bool newVentIsOn = (ventStr == "on");
+    if (lastVentilationState != -1 && (bool)lastVentilationState != newVentIsOn)
+      Buzzer::beepbeepbeep(newVentIsOn ? 50 : 200);
+    lastVentilationState = newVentIsOn ? 1 : 0;
+    ventIsOn = newVentIsOn;
   }
 }

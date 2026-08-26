@@ -9,7 +9,6 @@ class Brightness {
     LEDPanel *ledPanel;
   public:
     Brightness(LEDPanel *ledPanel);
-    void setup();
     void loop();
 };
 

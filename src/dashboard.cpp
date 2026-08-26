@@ -1,9 +1,7 @@
 #include "dashboard.h"
 #include "colors.h"
-#include "common.h"
 #include "weather-service.h"
 #include <Arduino.h>
-#include <time.h>
 #include <math.h>
 
 #define CURVE_PAD 4
@@ -18,7 +16,7 @@ int Dashboard::tempToY(float temp, float tMin, float tMax) {
   return bottomY - (int)(ratio * (bottomY - topY));
 }
 
-static uint16_t tempToColor(MatrixPanel_I2S_DMA* disp, float temp, bool isInterior) {
+static uint16_t tempToColor(float temp, bool isInterior) {
   float coldStart, coldEnd, hotStart, hotEnd;
   if (isInterior) {
     coldStart = 16.0f; coldEnd = 19.0f;
@@ -41,7 +39,7 @@ static uint16_t tempToColor(MatrixPanel_I2S_DMA* disp, float temp, bool isInteri
   } else {
     r = 255; g = 0; b = 0;
   }
-  return disp->color565(r, g, b);
+  return rgb565(r, g, b);
 }
 
 static uint16_t dimColor565(uint16_t c, int div) {
@@ -58,11 +56,21 @@ static uint16_t addColors565(uint16_t c1, uint16_t c2) {
   return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+// Contour 8 directions puis le trait principal par-dessus, pour detacher texte
+// et icones du fond des courbes. draw(dx, dy, couleur) fait le rendu decale.
+static const int8_t OUTLINE_OFFSETS[8][2] = {{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{1,-1},{-1,1},{1,1}};
+
+template <typename F>
+static void drawWithOutline(F draw, uint16_t fg, uint16_t shadow) {
+  for (auto& off : OUTLINE_OFFSETS) draw(off[0], off[1], shadow);
+  draw(0, 0, fg);
+}
+
 void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
                            int n, float tMin, float tMax) {
   int bottomY = SCREEN_HEIGHT - 1;
 
-  int8_t gridType[SCREEN_HEIGHT] = {};
+  bool isGridLine[SCREEN_HEIGHT] = {};
   if (!isnan(tMin) && !isnan(tMax) && tMax > tMin) {
     int firstTemp = (int)floorf(tMin / 10.0f) * 10;
     int lastTemp  = (int)ceilf(tMax / 10.0f) * 10;
@@ -70,7 +78,7 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       float ratio = (temp - tMin) / (tMax - tMin);
       int y = bottomY - (int)(ratio * (bottomY - CURVE_PAD));
       if (y >= CURVE_PAD && y <= bottomY)
-        gridType[y] = 2;
+        isGridLine[y] = true;
     }
   }
 
@@ -85,8 +93,8 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
     for (int y = CURVE_PAD; y <= bottomY; y++) {
       float ratio  = (float)(curveBottomY - y) / (float)(curveBottomY - curveTopY);
       float tempAtY = tMin + ratio * (tMax - tMin);
-      colorEtageAtY[y] = tempToColor(disp, tempAtY, true);
-      colorExtAtY[y]   = tempToColor(disp, tempAtY, false);
+      colorEtageAtY[y] = tempToColor(tempAtY, true);
+      colorExtAtY[y]   = tempToColor(tempAtY, false);
     }
   }
 
@@ -101,7 +109,7 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       bool inExt   = hasExt   && y > yExt;
       if (!inEtage && !inExt) continue;
 
-      int div = (gridType[y] == 2) ? 3 : 7;
+      int div = isGridLine[y] ? 3 : 7;
       uint16_t ce = dimColor565(colorEtageAtY[y], div);
       uint16_t cx = dimColor565(colorExtAtY[y],   div);
 
@@ -119,8 +127,7 @@ void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, boo
     int y0 = tempToY(temps[x - 1], tMin, tMax);
     int y1 = tempToY(temps[x], tMin, tMax);
     float avgTemp = (temps[x - 1] + temps[x]) * 0.5f;
-    uint16_t color = tempToColor(disp, avgTemp, isInterior);
-    disp->drawLine(x - 1, y0, x, y1, color);
+    disp->drawLine(x - 1, y0, x, y1, tempToColor(avgTemp, isInterior));
   }
 }
 
@@ -201,10 +208,10 @@ void Dashboard::drawCurrentValues(float etageTemp, float extTemp) {
     highTemp   = extTemp;
     isInterior = false;
   }
-  uint16_t highColor = tempToColor(this->ledPanel->dma_display, highTemp, isInterior);
+  uint16_t highColor = tempToColor(highTemp, isInterior);
 
   char buf[8];
-  sprintf(buf, "%.1f", highTemp);
+  snprintf(buf, sizeof(buf), "%.1f", highTemp);
   for (int i = 0; buf[i]; i++) if (buf[i] == '.') { buf[i] = ','; break; }
 
   const int degCW    = 7;
@@ -215,22 +222,15 @@ void Dashboard::drawCurrentValues(float etageTemp, float extTemp) {
   int textX  = SCREEN_WIDTH - totalW;
 
   auto* disp = this->ledPanel->dma_display;
-  uint16_t shadowColor = Colors::black(disp);
   disp->setTextSize(1);
   disp->setTextWrap(false);
 
-  const int8_t offsets[8][2] = {{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{1,-1},{-1,1},{1,1}};
-  for (auto& off : offsets) {
-    disp->setCursor(textX + off[0], 1 + off[1]);
-    disp->setTextColor(shadowColor);
+  drawWithOutline([&](int dx, int dy, uint16_t c) {
+    disp->setCursor(textX + dx, 1 + dy);
+    disp->setTextColor(c);
     disp->print(buf);
-    drawDegC(disp, textX + textW + gap + off[0], 1 + off[1], shadowColor);
-  }
-
-  disp->setCursor(textX, 1);
-  disp->setTextColor(highColor);
-  disp->print(buf);
-  drawDegC(disp, textX + textW + gap, 1, highColor);
+    drawDegC(disp, textX + textW + gap + dx, 1 + dy, c);
+  }, highColor, Colors::BLACK);
 }
 
 void Dashboard::drawVentilation(bool isOn) {
@@ -240,51 +240,44 @@ void Dashboard::drawVentilation(bool isOn) {
   const int symSz  = 5;
   int rx = margin;
   int ry = SCREEN_HEIGHT - margin - (2 * pad + symSz);
-  disp->fillRect(rx, ry, 2 * pad + symSz, 2 * pad + symSz, Colors::rgb(disp, 150, 150, 150));
+  disp->fillRect(rx, ry, 2 * pad + symSz, 2 * pad + symSz, Colors::VENT_BOX);
   if (isOn)
-    drawCheckmark(disp, rx + pad, ry + pad, Colors::green(disp));
+    drawCheckmark(disp, rx + pad, ry + pad, Colors::GREEN);
   else
-    drawCross(disp, rx + pad, ry + pad, Colors::red(disp));
+    drawCross(disp, rx + pad, ry + pad, Colors::RED);
 
   float crossMins = WeatherService::crossingMinutes;
-  if (!isnan(crossMins)) {
-    char buf[8];
-    int mins = (int)roundf(crossMins);
-    if (mins < 60) {
-      snprintf(buf, sizeof(buf), "%dm", mins);
-    } else {
-      int h = mins / 60;
-      int m = mins % 60;
-      if (m == 0)
-        snprintf(buf, sizeof(buf), "%dh", h);
-      else
-        snprintf(buf, sizeof(buf), "%dh%02d", h, m);
-    }
+  if (isnan(crossMins)) return;
 
-    int arrowX = rx + 2 * pad + symSz + 2;
-    int textX  = arrowX + 9 + 1;  // fleche 9px large (6 queue + 3 tete) + 1px gap
-    int arrowY = ry + 1;           // redescendu d'un cran
-    int y      = ry;               // texte reste a ry (aligne avec la coche)
-
-    uint16_t shadow = Colors::black(disp);
-    uint16_t white  = Colors::white(disp);
-    const int8_t offsets[8][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
-
-    for (auto& off : offsets)
-      drawArrowRight(disp, arrowX + off[0], arrowY + off[1], shadow);
-    drawArrowRight(disp, arrowX, arrowY, white);
-
-    disp->setTextSize(1);
-    disp->setTextWrap(false);
-    for (auto& off : offsets) {
-      disp->setCursor(textX + off[0], y + off[1]);
-      disp->setTextColor(shadow);
-      disp->print(buf);
-    }
-    disp->setCursor(textX, y);
-    disp->setTextColor(white);
-    disp->print(buf);
+  char buf[8];
+  int mins = (int)roundf(crossMins);
+  if (mins < 60) {
+    snprintf(buf, sizeof(buf), "%dm", mins);
+  } else {
+    int h = mins / 60;
+    int m = mins % 60;
+    if (m == 0)
+      snprintf(buf, sizeof(buf), "%dh", h);
+    else
+      snprintf(buf, sizeof(buf), "%dh%02d", h, m);
   }
+
+  int arrowX = rx + 2 * pad + symSz + 2;
+  int textX  = arrowX + 9 + 1;  // fleche 9px large (6 queue + 3 tete) + 1px gap
+  int arrowY = ry + 1;           // redescendu d'un cran
+  int y      = ry;               // texte reste a ry (aligne avec la coche)
+
+  drawWithOutline([&](int dx, int dy, uint16_t c) {
+    drawArrowRight(disp, arrowX + dx, arrowY + dy, c);
+  }, Colors::WHITE, Colors::BLACK);
+
+  disp->setTextSize(1);
+  disp->setTextWrap(false);
+  drawWithOutline([&](int dx, int dy, uint16_t c) {
+    disp->setCursor(textX + dx, y + dy);
+    disp->setTextColor(c);
+    disp->print(buf);
+  }, Colors::WHITE, Colors::BLACK);
 }
 
 void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
@@ -300,45 +293,13 @@ void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
     int iconY = max(0, min(SCREEN_HEIGHT - 4, curveY - 2));
 
     if (isSun)
-      drawSun(disp, iconX, iconY, Colors::rgb(disp, 255, 220, 0));
+      drawSun(disp, iconX, iconY, Colors::SUN);
     else
-      drawMoon(disp, iconX, iconY, Colors::rgb(disp, 180, 210, 255));
+      drawMoon(disp, iconX, iconY, Colors::MOON);
   };
 
   placeIcon(WeatherService::sunriseX, true);
   placeIcon(WeatherService::sunsetX,  false);
-}
-
-void Dashboard::drawCrossingDebug(float tMin, float tMax) {
-  if (!WeatherService::debugCrossingValid) return;
-  auto* disp = this->ledPanel->dma_display;
-  uint16_t green = Colors::green(disp);
-
-  long nowTs       = (long)time(NULL);
-  long windowStart = nowTs - 24L * 3600L;
-  auto toX = [&](long ts) -> int {
-    long offset = ts - windowStart;
-    if (offset < 0)             offset = 0;
-    if (offset > 24L * 3600L)   offset = 24L * 3600L;
-    return (int)((offset * (long)(SCREEN_WIDTH - 1)) / (24L * 3600L));
-  };
-
-  // Ligne verticale pointillee : debut de la fenetre de regression du croisement
-  int lineX = toX(WeatherService::debugCrossingWindowStartTs);
-  for (int y = CURVE_PAD; y <= SCREEN_HEIGHT - 1; y += 2)
-    disp->drawPixel(lineX, y, green);
-
-  // Points consideres pour le calcul du croisement
-  for (int i = 0; i < WeatherService::debugEtagePtsCount; i++) {
-    int x = toX(WeatherService::debugEtagePtsTs[i]);
-    int y = tempToY(WeatherService::debugEtagePtsVal[i], tMin, tMax);
-    disp->drawPixel(x, y, green);
-  }
-  for (int i = 0; i < WeatherService::debugExtPtsCount; i++) {
-    int x = toX(WeatherService::debugExtPtsTs[i]);
-    int y = tempToY(WeatherService::debugExtPtsVal[i], tMin, tMax);
-    disp->drawPixel(x, y, green);
-  }
 }
 
 static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
@@ -346,9 +307,9 @@ static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
   const int cy     = SCREEN_HEIGHT / 2;  // cadran centre sur l'ecran
   const int radius = 13;
 
-  uint16_t cBody = Colors::lightGrey(disp);
-  uint16_t cTick = Colors::white(disp);
-  uint16_t cHand = Colors::rgb(disp, 255, 180, 0);  // ambre
+  uint16_t cBody = Colors::LIGHT_GREY;
+  uint16_t cTick = Colors::WHITE;
+  uint16_t cHand = Colors::CLOCK_HAND;
 
   // Couronne (base uniquement, se connecte au cercle)
   disp->fillRect(cx - 4, cy - radius - 3, 9, 3, cBody);
@@ -372,35 +333,19 @@ Dashboard::Dashboard(LEDPanel *ledPanel) {
   this->ledPanel = ledPanel;
 }
 
-void Dashboard::setup() {
-  Serial.println("[dash] setup OK");
-}
-
 void Dashboard::showLoading() {
   this->ledPanel->dma_display->clearScreen();
-  this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
+  this->ledPanel->dma_display->fillScreen(Colors::BLACK);
   drawLoadingIcon(this->ledPanel->dma_display);
 }
 
 void Dashboard::loop() {
   Serial.println("[dash] === BOUCLE ===");
 
-  struct tm timeinfo;
-  int retries = 0;
-  while (!getLocalTime(&timeinfo) && retries < 10) {
-    delay(500);
-    retries++;
-  }
-  if (retries >= 10) {
-    Serial.println("[dash] ERREUR: getLocalTime echoue");
-  } else {
-    Serial.printf("[dash] NTP OK: %02d:%02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-  }
-
   WeatherService::refresh();
 
   this->ledPanel->dma_display->clearScreen();
-  this->ledPanel->dma_display->fillScreen(Colors::black(this->ledPanel->dma_display));
+  this->ledPanel->dma_display->fillScreen(Colors::BLACK);
 
   const float* etageTemps = WeatherService::etageTemps;
   const float* extTemps   = WeatherService::extTemps;
@@ -426,18 +371,14 @@ void Dashboard::loop() {
   if (etageValid > 0) drawCurve(etageTemps, SCREEN_WIDTH, tMin, tMax, true);
   if (extValid > 0)   drawCurve(extTemps,   SCREEN_WIDTH, tMin, tMax, false);
 
-  if (DEBUG_CROSSING_ESTIMATION) {
-    drawCrossingDebug(tMin, tMax);
-  } else if (extValid > 0) {
-    drawSolarEvents(extTemps, tMin, tMax);
-  }
+  if (extValid > 0) drawSolarEvents(extTemps, tMin, tMax);
 
   drawCurrentValues(WeatherService::lastEtage, WeatherService::lastExt);
   drawVentilation(WeatherService::ventIsOn);
 
   if (etageValid == 0 && extValid == 0) {
     this->ledPanel->dma_display->setCursor(5, 30);
-    this->ledPanel->dma_display->setTextColor(Colors::lightGrey(this->ledPanel->dma_display));
+    this->ledPanel->dma_display->setTextColor(Colors::LIGHT_GREY);
     this->ledPanel->dma_display->print("Pas de donnees");
   }
 

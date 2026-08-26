@@ -8,6 +8,12 @@
 #include "secrets.h"
 #include "home-assistant.h"
 
+// ATTENTION FUSEAU : HA renvoie ses timestamps en UTC, et mktime() interprete
+// un struct tm en heure *locale*. Cela n'est correct que parce que
+// configTime(0, 0, ...) fixe le fuseau a UTC (voir wifi-connection.cpp).
+// timegm() n'existe pas dans la newlib ESP32, d'ou ce couplage assume.
+// Changer le fuseau dans configTime decalerait toutes les series.
+
 static String getTimestamp(long hoursBack) {
   long now = time(NULL);
   long then = now - (hoursBack * 3600L);
@@ -18,182 +24,142 @@ static String getTimestamp(long hoursBack) {
   return String(buffer) + "Z";
 }
 
-String HomeAssistant::getEntityState(const String& entityId) {
+// Parse un timestamp ISO UTC de HA en unix ts (voir la note sur le fuseau).
+static long parseHaTimestamp(const char* s) {
+  struct tm tm_info;
+  memset(&tm_info, 0, sizeof(tm_info));
+  strptime(s, "%Y-%m-%dT%H:%M:%S", &tm_info);
+  tm_info.tm_isdst = -1;
+  return (long)mktime(&tm_info);
+}
+
+// GET sur l'API HA : URL, bearer, retry des echecs *reseau* uniquement
+// (un 401 ou un 404 ne reussira jamais, inutile de le rejouer), puis
+// deserialisation. Retourne false si quoi que ce soit echoue.
+static bool haGet(const String& path, JsonDocument& doc, const JsonDocument* filter = nullptr) {
   HTTPClient http;
-
-  String url;
-  url += F("http://");
-  url += SECRET_HOME_ASSISTANT_HOST;
-  url += F("/api/states/");
-  url += entityId;
-
-  http.begin(url);
+  http.begin(String(F("http://")) + SECRET_HOME_ASSISTANT_HOST + path);
   http.useHTTP10(true);
-  String bearer;
-  bearer += F("Bearer ");
-  bearer += SECRET_HOME_ASSISTANT_TOKEN;
-  http.addHeader("Authorization", bearer);
+  http.addHeader("Authorization", String(F("Bearer ")) + SECRET_HOME_ASSISTANT_TOKEN);
 
   int httpCode;
   int retry = 0;
-
   do {
     httpCode = http.GET();
-    retry++;
-  } while (httpCode <= 0 && retry < HTTP_RETRY);
+  } while (httpCode <= 0 && ++retry < HTTP_RETRY);
 
   if (httpCode != 200) {
+    Serial.printf("[ha] KO %d\n", httpCode);
     http.end();
-    return "?";
+    return false;
   }
 
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, http.getStream());
+  DeserializationError error = filter
+    ? deserializeJson(doc, http.getStream(), DeserializationOption::Filter(*filter))
+    : deserializeJson(doc, http.getStream());
   http.end();
 
-  if (error) return "?";
+  if (error) {
+    Serial.printf("[ha] json: %s\n", error.c_str());
+    return false;
+  }
+  return true;
+}
+
+// Filtre ArduinoJson commun aux appels /history : ne garde que state et
+// last_changed pour economiser la RAM.
+static void historyFilter(JsonDocument& filter) {
+  filter[0][0]["state"] = true;
+  filter[0][0]["last_changed"] = true;
+}
+
+// Construit le chemin /history/period pour une fenetre [startHoursBack, endHoursBack].
+static String historyPath(const String& entityId, long startHoursBack, long endHoursBack) {
+  String path;
+  path += F("/api/history/period/");
+  path += getTimestamp(startHoursBack);
+  path += F("?filter_entity_id=");
+  path += entityId;
+  path += F("&end_time=");
+  path += getTimestamp(endHoursBack);
+  path += F("&minimal_response");
+  return path;
+}
+
+// Extrait le tableau de points d'une reponse /history. null si vide.
+static JsonArray historyPoints(JsonDocument& doc) {
+  JsonArray result = doc.as<JsonArray>();
+  if (result.isNull() || result.size() == 0) return JsonArray();
+  return result[0].as<JsonArray>();
+}
+
+// true si l'etat est une valeur numerique exploitable ("unavailable", "unknown"... sont rejetes).
+static bool isNumericState(const char* stateStr) {
+  return stateStr && (isdigit((unsigned char)stateStr[0]) || stateStr[0] == '-');
+}
+
+String HomeAssistant::getEntityState(const String& entityId) {
+  JsonDocument doc;
+  if (!haGet(String(F("/api/states/")) + entityId, doc)) return "?";
   return doc["state"].as<String>();
 }
 
 static void fetchChunk(const String& entityId, float* out, int outSize,
                        long startHoursBack, long endHoursBack,
                        long globalStartTs, long totalSeconds) {
-  HTTPClient http;
-
-  String url;
-  url += F("http://");
-  url += SECRET_HOME_ASSISTANT_HOST;
-  url += F("/api/history/period/");
-  url += getTimestamp(startHoursBack);
-  url += F("?filter_entity_id=");
-  url += entityId;
-  url += F("&end_time=");
-  url += getTimestamp(endHoursBack);
-  url += F("&minimal_response");
-
-  http.begin(url);
-  http.useHTTP10(true);
-  String bearer;
-  bearer += F("Bearer ");
-  bearer += SECRET_HOME_ASSISTANT_TOKEN;
-  http.addHeader("Authorization", bearer);
-
-  int httpCode;
-  int retry = 0;
-  do {
-    httpCode = http.GET();
-    retry++;
-  } while (httpCode <= 0 && retry < HTTP_RETRY);
-
-  if (httpCode != 200) {
-    Serial.printf("[ha] chunk KO: %d\n", httpCode);
-    http.end();
-    return;
-  }
-
-  Serial.printf("[ha] chunk [-%ldh..-%ldh] %d bytes\n", startHoursBack, endHoursBack, http.getSize());
-
   JsonDocument filter;
-  filter[0][0]["state"] = true;
-  filter[0][0]["last_changed"] = true;
+  historyFilter(filter);
 
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
-  http.end();
+  if (!haGet(historyPath(entityId, startHoursBack, endHoursBack), doc, &filter)) return;
 
-  if (error) {
-    Serial.printf("[ha] deserializeJson failed: %s\n", error.c_str());
-    return;
-  }
-
-  JsonArray result = doc.as<JsonArray>();
-  if (result.isNull() || result.size() == 0) return;
-
-  JsonArray entityHistory = result[0].as<JsonArray>();
+  JsonArray entityHistory = historyPoints(doc);
   if (entityHistory.isNull()) return;
+
+  Serial.printf("[ha] chunk [-%ldh..-%ldh]\n", startHoursBack, endHoursBack);
+
+  // HA renvoie en premier element l'etat *anterieur* a start_time : son
+  // last_changed precede la fenetre demandee et serait clampe sur out[0],
+  // que les 6 chunks se rechireraient a tour de role. On ne garde ce point
+  // d'amorce que pour le chunk le plus ancien, seul a borner vraiment out[0].
+  long chunkStartTs = globalStartTs + totalSeconds - startHoursBack * 3600L;
+  bool isOldestChunk = (chunkStartTs <= globalStartTs);
 
   for (JsonObject state : entityHistory) {
     const char* stateStr = state["state"];
-    if (!stateStr || (!isdigit((unsigned char)stateStr[0]) && stateStr[0] != '-')) continue;
-    float value = atof(stateStr);
+    if (!isNumericState(stateStr)) continue;
 
     const char* tsStr = state["last_changed"];
     if (!tsStr) continue;
 
-    struct tm tm_info;
-    memset(&tm_info, 0, sizeof(tm_info));
-    strptime(tsStr, "%Y-%m-%dT%H:%M:%S", &tm_info);
-    tm_info.tm_isdst = -1;
-    long ts = (long)mktime(&tm_info);
+    long ts = parseHaTimestamp(tsStr);
+    if (ts < chunkStartTs && !isOldestChunk) continue;
 
     long offset = ts - globalStartTs;
     if (offset < 0) offset = 0;
     if (offset > totalSeconds) offset = totalSeconds;
 
     int idx = (int)((offset / (float)totalSeconds) * (outSize - 1));
-    out[idx] = value;
+    out[idx] = atof(stateStr);
   }
 }
 
 int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
                                 long* timestamps, float* values, int maxPoints) {
-  HTTPClient http;
-
-  String url;
-  url += F("http://");
-  url += SECRET_HOME_ASSISTANT_HOST;
-  url += F("/api/history/period/");
-  url += getTimestamp(hoursBack);
-  url += F("?filter_entity_id=");
-  url += entityId;
-  url += F("&end_time=");
-  url += getTimestamp(0);
-  url += F("&minimal_response");
-
-  http.begin(url);
-  http.useHTTP10(true);
-  String bearer;
-  bearer += F("Bearer ");
-  bearer += SECRET_HOME_ASSISTANT_TOKEN;
-  http.addHeader("Authorization", bearer);
-
-  int httpCode;
-  int retry = 0;
-  do {
-    httpCode = http.GET();
-    retry++;
-  } while (httpCode != 200 && retry < HTTP_RETRY);
-
-  if (httpCode != 200) {
-    Serial.printf("[ha] getRawSeries KO: %d\n", httpCode);
-    http.end();
-    return 0;
-  }
-
   JsonDocument filter;
-  filter[0][0]["state"] = true;
-  filter[0][0]["last_changed"] = true;
+  historyFilter(filter);
 
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
-  http.end();
+  if (!haGet(historyPath(entityId, hoursBack, 0), doc, &filter)) return 0;
 
-  if (error) {
-    Serial.printf("[ha] getRawSeries deserialize failed: %s\n", error.c_str());
-    return 0;
-  }
-
-  JsonArray result = doc.as<JsonArray>();
-  if (result.isNull() || result.size() == 0) return 0;
-
-  JsonArray entityHistory = result[0].as<JsonArray>();
+  JsonArray entityHistory = historyPoints(doc);
   if (entityHistory.isNull()) return 0;
 
   // Decoupage de la fenetre en maxPoints buckets temporels egaux.
   // Chaque point recu est accumule dans son bucket ; on fait la moyenne a la fin.
   // Cela garantit que tous les points recus contribuent au resultat,
   // quelle que soit leur repartition dans le temps.
-  long tStart   = (long)time(nullptr) - hoursBack * 3600L;
+  long tStart     = (long)time(nullptr) - hoursBack * 3600L;
   long bucketSecs = (hoursBack * 3600L) / maxPoints;
   if (bucketSecs < 1) bucketSecs = 1;
 
@@ -204,23 +170,17 @@ int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
   int totalReceived = 0;
   for (JsonObject state : entityHistory) {
     const char* stateStr = state["state"];
-    if (!stateStr || (!isdigit((unsigned char)stateStr[0]) && stateStr[0] != '-')) continue;
+    if (!isNumericState(stateStr)) continue;
     const char* tsStr = state["last_changed"];
     if (!tsStr) continue;
 
-    struct tm tm_info;
-    memset(&tm_info, 0, sizeof(tm_info));
-    strptime(tsStr, "%Y-%m-%dT%H:%M:%S", &tm_info);
-    tm_info.tm_isdst = -1;
-
-    long ts  = (long)mktime(&tm_info);
-    float val = atof(stateStr);
+    long ts = parseHaTimestamp(tsStr);
 
     int bucket = (int)((ts - tStart) / bucketSecs);
     if (bucket < 0)          bucket = 0;
     if (bucket >= maxPoints) bucket = maxPoints - 1;
 
-    values[bucket] += val;
+    values[bucket] += atof(stateStr);
     cnts[bucket]++;
     totalReceived++;
   }
@@ -240,56 +200,19 @@ int HomeAssistant::getRawSeries(const String& entityId, long hoursBack,
 }
 
 bool HomeAssistant::getSunTimes(time_t& nextRising, time_t& nextSetting) {
-  HTTPClient http;
-
-  String url;
-  url += F("http://");
-  url += SECRET_HOME_ASSISTANT_HOST;
-  url += F("/api/states/sun.sun");
-
-  http.begin(url);
-  http.useHTTP10(true);
-  String bearer;
-  bearer += F("Bearer ");
-  bearer += SECRET_HOME_ASSISTANT_TOKEN;
-  http.addHeader("Authorization", bearer);
-
-  int httpCode;
-  int retry = 0;
-  do {
-    httpCode = http.GET();
-    retry++;
-  } while (httpCode <= 0 && retry < HTTP_RETRY);
-
-  if (httpCode != 200) {
-    http.end();
-    return false;
-  }
-
   JsonDocument filter;
   filter["attributes"]["next_rising"]  = true;
   filter["attributes"]["next_setting"] = true;
 
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
-  http.end();
-
-  if (error) return false;
+  if (!haGet(String(F("/api/states/sun.sun")), doc, &filter)) return false;
 
   const char* risingStr  = doc["attributes"]["next_rising"];
   const char* settingStr = doc["attributes"]["next_setting"];
   if (!risingStr || !settingStr) return false;
 
-  auto parseISO = [](const char* s) -> time_t {
-    struct tm tm_info;
-    memset(&tm_info, 0, sizeof(tm_info));
-    strptime(s, "%Y-%m-%dT%H:%M:%S", &tm_info);
-    tm_info.tm_isdst = -1;
-    return (time_t)mktime(&tm_info);
-  };
-
-  nextRising  = parseISO(risingStr);
-  nextSetting = parseISO(settingStr);
+  nextRising  = (time_t)parseHaTimestamp(risingStr);
+  nextSetting = (time_t)parseHaTimestamp(settingStr);
 
   Serial.printf("[ha] sun: next_rising=%s next_setting=%s\n", risingStr, settingStr);
   return true;

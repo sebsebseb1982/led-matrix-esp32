@@ -2,12 +2,10 @@
 #include "wifi-connection.h"
 #include "secrets.h"
 
-unsigned int WiFiConnection::nbConnection = 0;
-
 void WiFiConnection::setup() {
   Serial.println("[wifi] connexion en cours...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int retry = 0; 
+  int retry = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     retry++;
@@ -17,11 +15,13 @@ void WiFiConnection::setup() {
       ESP.restart();
     }
   }
-  nbConnection++;
   Serial.println("");
   Serial.print("[wifi] connecte, IP: ");
   Serial.println(WiFi.localIP());
 
+  // Fuseau UTC volontaire : home-assistant.cpp convertit les timestamps HA
+  // avec mktime(), qui suppose l'heure locale. Mettre un vrai fuseau ici
+  // decalerait toutes les series de plusieurs heures.
   Serial.println("[wifi] config NTP...");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   Serial.println("[wifi] NTP configure, attente sync...");
@@ -40,6 +40,7 @@ void WiFiConnection::setup() {
 
 void WiFiConnection::loop() {
   if(WiFi.status() != WL_CONNECTED) {
+    Serial.println("[wifi] lien perdu, reconnexion...");
     setup();
   }
 }

@@ -1,11 +1,8 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+// Nombre de tentatives sur echec *reseau* d'une requete HA (un code HTTP
+// d'erreur n'est pas rejoue, il ne reussira pas davantage).
 #define HTTP_RETRY 10
-
-// Debug de l'estimation de croisement des courbes : trace la fenetre de
-// regression (pointilles verts) et les points consideres (points verts),
-// et masque soleil/lune pour simplifier la vue.
-constexpr bool DEBUG_CROSSING_ESTIMATION = false;
 
 #endif

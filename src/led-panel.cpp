@@ -1,7 +1,7 @@
 #include "led-panel.h"
 #include "colors.h"
 
-LEDPanel::LEDPanel(int toto) {
+LEDPanel::LEDPanel() {
   // Module configuration
   HUB75_I2S_CFG mxconfig(
     SCREEN_WIDTH,   // module width
@@ -22,5 +22,5 @@ LEDPanel::LEDPanel(int toto) {
 void LEDPanel::setup() {
   dma_display->setBrightness8(10);  //0-255
   dma_display->clearScreen();
-  dma_display->fillScreen(Colors::black(dma_display));
+  dma_display->fillScreen(Colors::BLACK);
 }

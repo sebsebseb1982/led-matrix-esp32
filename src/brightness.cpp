@@ -1,21 +1,21 @@
 #include "brightness.h"
-#include "colors.h"
 
 Brightness::Brightness(LEDPanel *ledPanel) {
   this->ledPanel = ledPanel;
 }
 
-void Brightness::setup() {  
-}
+void Brightness::loop() {
+  int raw = analogRead(LIGHT_SENSOR_PIN);
 
-void Brightness::loop() {  
-  float luminosity = analogRead(LIGHT_SENSOR_PIN) / 4095.0;
-  int brightness = max(int(luminosity*255.0), 20);
+  // ponytail: lissage exponentiel, l'ADC de l'ESP32 est bruite et la luminosite
+  // scintillait d'un cycle a l'autre. Moyenne glissante si ca ne suffit pas.
+  // Premier appel : on part de la mesure, sinon la rampe depuis 0 laisse
+  // l'ecran noir plusieurs cycles au reveil.
+  static float smooth = -1.0f;
+  smooth = (smooth < 0.0f) ? (float)raw : (smooth * 0.8f + raw * 0.2f);
 
-/*
-  this->ledPanel->dma_display->setCursor(1, 50);
-  this->ledPanel->dma_display->setTextColor(Colors::black(this->ledPanel->dma_display));
-  this->ledPanel->dma_display->print(String(brightness));
-*/
+  // Plancher a 20 : en dessous le panneau est illisible. Bouton de calibration,
+  // a remonter si l'ecran reste trop sombre la nuit.
+  int brightness = max(int(smooth / 4095.0f * 255.0f), 20);
   this->ledPanel->dma_display->setBrightness8(brightness);
 }
