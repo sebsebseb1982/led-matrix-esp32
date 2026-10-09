@@ -57,13 +57,23 @@ static uint16_t addColors565(uint16_t c1, uint16_t c2) {
 }
 
 // Contour 8 directions puis le trait principal par-dessus, pour detacher texte
-// et icones du fond des courbes. draw(dx, dy, couleur) fait le rendu decale.
+// et icones du fond des courbes. Le contour assombrit le fond au lieu de le
+// noircir : les decalages sont d'abord rendus dans un masque, pour que chaque
+// pixel ne soit assombri qu'une fois malgre les recouvrements.
+// draw(cible, dx, dy, couleur) fait le rendu decale.
 static const int8_t OUTLINE_OFFSETS[8][2] = {{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{1,-1},{-1,1},{1,1}};
+#define OUTLINE_DIM 4
 
 template <typename F>
-static void drawWithOutline(F draw, uint16_t fg, uint16_t shadow) {
-  for (auto& off : OUTLINE_OFFSETS) draw(off[0], off[1], shadow);
-  draw(0, 0, fg);
+static void drawWithOutline(GFXcanvas16* canvas, F draw, uint16_t fg) {
+  static GFXcanvas1 mask(SCREEN_WIDTH, SCREEN_HEIGHT);
+  mask.fillScreen(0);
+  for (auto& off : OUTLINE_OFFSETS) draw(&mask, off[0], off[1], 1);
+  for (int y = 0; y < SCREEN_HEIGHT; y++)
+    for (int x = 0; x < SCREEN_WIDTH; x++)
+      if (mask.getPixel(x, y))
+        canvas->drawPixel(x, y, dimColor565(canvas->getPixel(x, y), OUTLINE_DIM));
+  draw(canvas, 0, 0, fg);
 }
 
 void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
@@ -82,7 +92,7 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
     }
   }
 
-  auto* disp = this->ledPanel->dma_display;
+  GFXcanvas16* disp = this->frame;
 
   // Précalcul : couleur par ligne Y selon la température que cette hauteur représente
   const int curveTopY    = CURVE_PAD;
@@ -124,7 +134,7 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
 }
 
 void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, bool isInterior) {
-  auto* disp = this->ledPanel->dma_display;
+  GFXcanvas16* disp = this->frame;
   for (int x = 1; x < n; x++) {
     if (isnan(temps[x]) || isnan(temps[x - 1])) continue;
     int y0 = tempToY(temps[x - 1], tMin, tMax);
@@ -144,7 +154,7 @@ void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, boo
 }
 
 // Coche verte 5x4 : bras droit (4,0)->(2,2), pointe (1,3), bras gauche (0,2)->(1,3)
-static void drawCheckmark(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+static void drawCheckmark(Adafruit_GFX* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+4, y+0, color);
   disp->drawPixel(x+3, y+1, color);
   disp->drawPixel(x+2, y+2, color);
@@ -153,7 +163,7 @@ static void drawCheckmark(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t colo
 }
 
 // Fleche droite avec queue : queue 6px + tete ">" 3px = 9px large, 5px haut (sans espace)
-static void drawArrowRight(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+static void drawArrowRight(Adafruit_GFX* disp, int x, int y, uint16_t color) {
   // Queue horizontale au milieu (6px, accolee au chapeau)
   for (int i = 0; i < 6; i++) disp->drawPixel(x+i, y+2, color);
   // Tete ">"
@@ -165,7 +175,7 @@ static void drawArrowRight(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t col
 }
 
 // Croix rouge 5x5
-static void drawCross(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+static void drawCross(Adafruit_GFX* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+0, y+0, color); disp->drawPixel(x+4, y+0, color);
   disp->drawPixel(x+1, y+1, color); disp->drawPixel(x+3, y+1, color);
   disp->drawPixel(x+2, y+2, color);
@@ -174,7 +184,7 @@ static void drawCross(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
 }
 
 // Soleil 4x4 (jaune)
-static void drawSun(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+static void drawSun(Adafruit_GFX* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+1, y+0, color); disp->drawPixel(x+2, y+0, color);
   disp->drawPixel(x+0, y+1, color); disp->drawPixel(x+1, y+1, color); disp->drawPixel(x+2, y+1, color); disp->drawPixel(x+3, y+1, color);
   disp->drawPixel(x+0, y+2, color); disp->drawPixel(x+1, y+2, color); disp->drawPixel(x+2, y+2, color); disp->drawPixel(x+3, y+2, color);
@@ -182,7 +192,7 @@ static void drawSun(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
 }
 
 // Lune croissant 4x4 (bleu clair) : C ouvert a droite
-static void drawMoon(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+static void drawMoon(Adafruit_GFX* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+1, y+0, color); disp->drawPixel(x+2, y+0, color); disp->drawPixel(x+3, y+0, color);
   disp->drawPixel(x+0, y+1, color); disp->drawPixel(x+1, y+1, color);
   disp->drawPixel(x+0, y+2, color); disp->drawPixel(x+1, y+2, color);
@@ -190,7 +200,7 @@ static void drawMoon(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
 }
 
 // degC en pixel art : deg (3x3) + gap (1px) + C (3x5) = 7px wide, 5px tall
-static void drawDegC(MatrixPanel_I2S_DMA* disp, int x, int y, uint16_t color) {
+static void drawDegC(Adafruit_GFX* disp, int x, int y, uint16_t color) {
   disp->drawPixel(x+1, y+0, color);
   disp->drawPixel(x+0, y+1, color);
   disp->drawPixel(x+2, y+1, color);
@@ -233,20 +243,19 @@ void Dashboard::drawCurrentValues(float etageTemp, float extTemp) {
   int totalW = textW + gap + degCW + rightPad;
   int textX  = SCREEN_WIDTH - totalW;
 
-  auto* disp = this->ledPanel->dma_display;
-  disp->setTextSize(1);
-  disp->setTextWrap(false);
-
-  drawWithOutline([&](int dx, int dy, uint16_t c) {
-    disp->setCursor(textX + dx, 1 + dy);
-    disp->setTextColor(c);
-    disp->print(buf);
-    drawDegC(disp, textX + textW + gap + dx, 1 + dy, c);
-  }, highColor, Colors::BLACK);
+  GFXcanvas16* disp = this->frame;
+  drawWithOutline(disp, [&](Adafruit_GFX* g, int dx, int dy, uint16_t c) {
+    g->setTextSize(1);
+    g->setTextWrap(false);
+    g->setCursor(textX + dx, 1 + dy);
+    g->setTextColor(c);
+    g->print(buf);
+    drawDegC(g, textX + textW + gap + dx, 1 + dy, c);
+  }, highColor);
 }
 
 void Dashboard::drawVentilation(bool isOn) {
-  auto* disp = this->ledPanel->dma_display;
+  GFXcanvas16* disp = this->frame;
   const int margin = 1;
   const int pad    = 1;
   const int symSz  = 5;
@@ -279,21 +288,21 @@ void Dashboard::drawVentilation(bool isOn) {
   int arrowY = ry + 1;           // redescendu d'un cran
   int y      = ry;               // texte reste a ry (aligne avec la coche)
 
-  drawWithOutline([&](int dx, int dy, uint16_t c) {
-    drawArrowRight(disp, arrowX + dx, arrowY + dy, c);
-  }, Colors::WHITE, Colors::BLACK);
+  drawWithOutline(disp, [&](Adafruit_GFX* g, int dx, int dy, uint16_t c) {
+    drawArrowRight(g, arrowX + dx, arrowY + dy, c);
+  }, Colors::WHITE);
 
-  disp->setTextSize(1);
-  disp->setTextWrap(false);
-  drawWithOutline([&](int dx, int dy, uint16_t c) {
-    disp->setCursor(textX + dx, y + dy);
-    disp->setTextColor(c);
-    disp->print(buf);
-  }, Colors::WHITE, Colors::BLACK);
+  drawWithOutline(disp, [&](Adafruit_GFX* g, int dx, int dy, uint16_t c) {
+    g->setTextSize(1);
+    g->setTextWrap(false);
+    g->setCursor(textX + dx, y + dy);
+    g->setTextColor(c);
+    g->print(buf);
+  }, Colors::WHITE);
 }
 
 void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
-  auto* disp = this->ledPanel->dma_display;
+  GFXcanvas16* disp = this->frame;
 
   auto placeIcon = [&](int xPos, bool isSun) {
     if (xPos < 0 || xPos >= SCREEN_WIDTH) return;
@@ -301,16 +310,16 @@ void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
                  ? tempToY(extTemps[xPos], tMin, tMax)
                  : SCREEN_HEIGHT / 2;
 
-    // Icone 4x4 + contour noir d'1px : on la garde a 1px des bords pour que le contour reste visible
+    // Icone 4x4 + contour d'1px : on la garde a 1px des bords pour que le contour reste visible
     int iconX = max(1, min(SCREEN_WIDTH - 5, xPos - 2));
     int iconY = max(1, min(SCREEN_HEIGHT - 5, curveY - 2));
 
-    drawWithOutline([&](int dx, int dy, uint16_t c) {
+    drawWithOutline(disp, [&](Adafruit_GFX* g, int dx, int dy, uint16_t c) {
       if (isSun)
-        drawSun(disp, iconX + dx, iconY + dy, c);
+        drawSun(g, iconX + dx, iconY + dy, c);
       else
-        drawMoon(disp, iconX + dx, iconY + dy, c);
-    }, isSun ? Colors::SUN : Colors::MOON, Colors::BLACK);
+        drawMoon(g, iconX + dx, iconY + dy, c);
+    }, isSun ? Colors::SUN : Colors::MOON);
   };
 
   placeIcon(WeatherService::sunriseX, true);
@@ -346,6 +355,7 @@ static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
 
 Dashboard::Dashboard(LEDPanel *ledPanel) {
   this->ledPanel = ledPanel;
+  this->frame    = new GFXcanvas16(SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
 void Dashboard::showLoading() {
@@ -359,8 +369,7 @@ void Dashboard::loop() {
 
   WeatherService::refresh();
 
-  this->ledPanel->dma_display->clearScreen();
-  this->ledPanel->dma_display->fillScreen(Colors::BLACK);
+  this->frame->fillScreen(Colors::BLACK);
 
   const float* etageTemps = WeatherService::etageTemps;
   const float* extTemps   = WeatherService::extTemps;
@@ -392,10 +401,12 @@ void Dashboard::loop() {
   drawVentilation(WeatherService::ventIsOn);
 
   if (etageValid == 0 && extValid == 0) {
-    this->ledPanel->dma_display->setCursor(5, 30);
-    this->ledPanel->dma_display->setTextColor(Colors::LIGHT_GREY);
-    this->ledPanel->dma_display->print("Pas de donnees");
+    this->frame->setCursor(5, 30);
+    this->frame->setTextColor(Colors::LIGHT_GREY);
+    this->frame->print("Pas de donnees");
   }
+
+  this->ledPanel->dma_display->drawRGBBitmap(0, 0, this->frame->getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT);
 
   Serial.println("[dash] == FIN BOUCLE ==");
 }
