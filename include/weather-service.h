@@ -15,6 +15,7 @@ public:
   static float crossingMinutes;  // NAN si pas de croisement prevu dans les 12h
   static int   sunriseX;         // pixel X du lever du soleil d'hier, -1 si inconnu
   static int   sunsetX;          // pixel X du coucher du soleil d'hier, -1 si inconnu
+  static bool  heatingOn[SCREEN_WIDTH];  // chauffage actif sur la colonne X
 
   static void refresh();
   static float estimateCrossingMinutes();

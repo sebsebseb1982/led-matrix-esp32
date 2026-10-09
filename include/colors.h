@@ -19,6 +19,9 @@ namespace Colors {
   constexpr uint16_t SUN        = rgb565(255, 220, 0);
   constexpr uint16_t MOON       = rgb565(180, 210, 255);
   constexpr uint16_t CLOCK_HAND = rgb565(255, 180, 0);
+  // Voile rouge additionne au remplissage sous la courbe etage pendant la
+  // chauffe : assez faible pour laisser voir le degrade et la zone exterieure.
+  constexpr uint16_t HEAT_TINT  = rgb565(90, 0, 0);
 }
 
 #endif

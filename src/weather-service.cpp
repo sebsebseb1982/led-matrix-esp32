@@ -25,6 +25,7 @@ float WeatherService::lastExt        = NAN;
 float WeatherService::crossingMinutes = NAN;
 int   WeatherService::sunriseX = -1;
 int   WeatherService::sunsetX  = -1;
+bool  WeatherService::heatingOn[SCREEN_WIDTH] = {};
 
 RTC_DATA_ATTR static int  lastVentilationState = -1;
 RTC_DATA_ATTR static long crossingUnixTs       = 0;  // timestamp absolu du prochain croisement prevu
@@ -168,6 +169,9 @@ void WeatherService::refresh() {
 
     interpolate(etageTemps, SCREEN_WIDTH);
     interpolate(extTemps, SCREEN_WIDTH);
+
+    Serial.println("[weather] fetch climate.thermostat...");
+    HomeAssistant::getHeatingColumns("climate.thermostat", HISTORY_HOURS, heatingOn, SCREEN_WIDTH);
 
     crossingMinutes = estimateCrossingMinutes();
     crossingUnixTs  = !isnan(crossingMinutes)

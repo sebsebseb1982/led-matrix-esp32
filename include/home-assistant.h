@@ -11,6 +11,10 @@ public:
   // out[0] = il y a hoursBack heures, out[outSize-1] = maintenant.
   // Retourne le nombre de cases renseignees.
   static int getTimeSeries(const String& entityId, long hoursBack, float* out, int outSize);
+  // Marque out[x] = true pour chaque colonne ou le thermostat chauffait
+  // (attribut hvac_action == "heating"). Meme axe que getTimeSeries.
+  // Retourne le nombre de colonnes en chauffe.
+  static int getHeatingColumns(const String& entityId, long hoursBack, bool* out, int outSize);
   // Retourne les donnees brutes (timestamp Unix, valeur) des hoursBack dernieres heures.
   // Retourne le nombre de points stockes (max maxPoints).
   static int getRawSeries(const String& entityId, long hoursBack,

@@ -74,7 +74,10 @@ static void historyFilter(JsonDocument& filter) {
 }
 
 // Construit le chemin /history/period pour une fenetre [startHoursBack, endHoursBack].
-static String historyPath(const String& entityId, long startHoursBack, long endHoursBack) {
+// minimal_response retire les attributs des points intermediaires : a desactiver
+// quand on lit un attribut plutot que l'etat.
+static String historyPath(const String& entityId, long startHoursBack, long endHoursBack,
+                          bool minimal = true) {
   String path;
   path += F("/api/history/period/");
   path += getTimestamp(startHoursBack);
@@ -82,7 +85,7 @@ static String historyPath(const String& entityId, long startHoursBack, long endH
   path += entityId;
   path += F("&end_time=");
   path += getTimestamp(endHoursBack);
-  path += F("&minimal_response");
+  if (minimal) path += F("&minimal_response");
   return path;
 }
 
@@ -216,6 +219,71 @@ bool HomeAssistant::getSunTimes(time_t& nextRising, time_t& nextSetting) {
 
   Serial.printf("[ha] sun: next_rising=%s next_setting=%s\n", risingStr, settingStr);
   return true;
+}
+
+int HomeAssistant::getHeatingColumns(const String& entityId, long hoursBack, bool* out, int outSize) {
+  for (int i = 0; i < outSize; i++) out[i] = false;
+
+  long totalSeconds  = hoursBack * 3600L;
+  long globalStartTs = (long)time(NULL) - totalSeconds;
+
+  auto toCol = [&](long ts) -> int {
+    long offset = ts - globalStartTs;
+    if (offset < 0) offset = 0;
+    if (offset > totalSeconds) offset = totalSeconds;
+    return (int)((offset / (float)totalSeconds) * (outSize - 1));
+  };
+
+  // hvac_action change sans toucher a l'etat (qui reste "heat") : seul
+  // last_updated date ces changements, last_changed resterait fige.
+  JsonDocument filter;
+  filter[0][0]["last_updated"] = true;
+  filter[0][0]["attributes"]["hvac_action"] = true;
+
+  // Les etats arrivent dans l'ordre chronologique, chunk le plus ancien en
+  // premier : chaque nouvel etat clot l'intervalle ouvert par le precedent.
+  // Une colonne est marquee des qu'une portion de chauffe la touche, si bien
+  // que les cycles PWM courts du PID apparaissent comme une plage continue.
+  long prevTs      = globalStartTs;
+  bool prevHeating = false;
+  auto closeInterval = [&](long ts) {
+    if (prevHeating)
+      for (int x = toCol(prevTs); x <= toCol(ts); x++) out[x] = true;
+  };
+
+  // Chunks de 4 h : sans minimal_response chaque etat porte tous les attributs
+  // du PID, et le thermostat en publie un par cycle.
+  const long CHUNK_HOURS = 4;
+  for (long start = hoursBack; start > 0; start -= CHUNK_HOURS) {
+    long end = start - CHUNK_HOURS;
+    if (end < 0) end = 0;
+
+    JsonDocument doc;
+    if (!haGet(historyPath(entityId, start, end, false), doc, &filter)) continue;
+    JsonArray entityHistory = historyPoints(doc);
+    if (entityHistory.isNull()) continue;
+
+    for (JsonObject state : entityHistory) {
+      const char* tsStr = state["last_updated"];
+      if (!tsStr) continue;
+      // Le point d'amorce de chaque chunk est anterieur au precedent : on le
+      // ramene a prevTs pour garder la chronologie.
+      long ts = max(parseHaTimestamp(tsStr), prevTs);
+      const char* action = state["attributes"]["hvac_action"];
+
+      closeInterval(ts);
+      prevTs      = ts;
+      prevHeating = action && strcmp(action, "heating") == 0;
+    }
+    delay(100);
+  }
+  closeInterval(globalStartTs + totalSeconds);
+
+  int heatingCount = 0;
+  for (int i = 0; i < outSize; i++)
+    if (out[i]) heatingCount++;
+  Serial.printf("[ha] %s: %d/%d colonnes en chauffe\n", entityId.c_str(), heatingCount, outSize);
+  return heatingCount;
 }
 
 int HomeAssistant::getTimeSeries(const String& entityId, long hoursBack, float* out, int outSize) {

@@ -103,6 +103,7 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
     bool hasExt   = !isnan(extTemps[x]);
     int yEtage = hasEtage ? tempToY(etageTemps[x], tMin, tMax) : bottomY + 1;
     int yExt   = hasExt   ? tempToY(extTemps[x],   tMin, tMax) : bottomY + 1;
+    bool heating = WeatherService::heatingOn[x];
 
     for (int y = CURVE_PAD; y <= bottomY; y++) {
       bool inEtage = hasEtage && y > yEtage;
@@ -112,6 +113,8 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       int div = isGridLine[y] ? 3 : 7;
       uint16_t ce = dimColor565(colorEtageAtY[y], div);
       uint16_t cx = dimColor565(colorExtAtY[y],   div);
+
+      if (heating && inEtage) ce = addColors565(ce, Colors::HEAT_TINT);
 
       if      (inEtage && inExt) disp->drawPixel(x, y, addColors565(ce, cx));
       else if (inEtage)          disp->drawPixel(x, y, ce);

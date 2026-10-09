@@ -37,7 +37,7 @@ The firmware runs on an ESP32 driving a 64×64 HUB75 RGB LED matrix panel (FM612
 `WeatherService::refresh()` has two tiers, because 64 px over 24 h means one column changes every ~22 min:
 
 - **Every cycle (10 s)**: ventilation state only — it triggers the buzzer, so it must be seen quickly. 1 request.
-- **Every 5 min** (`SLOW_REFRESH_MS`): 24 h history for both sensors (6 chunks each), crossing regression (2), sun times (1). 15 requests.
+- **Every 5 min** (`SLOW_REFRESH_MS`): 24 h history for both sensors (6 chunks each), heating periods from `climate.thermostat` (6 chunks, attribute `hvac_action == heating`, drawn as a red tint under the etage curve), crossing regression (2), sun times (1). 21 requests.
 
 A failed ventilation read returns `"?"` and is ignored rather than treated as "off", so a network blip does not fire the buzzer.
 
@@ -51,7 +51,7 @@ A failed ventilation read returns `"?"` and is ignored rather than treated as "o
 
 ### Secrets
 
-All credentials live in `include/secrets.h`, which is **gitignored and must be created locally** (it has never been committed): WiFi SSID/password and Home Assistant host + long-lived access token. Home Assistant entity IDs are hardcoded in `src/weather-service.cpp`: `sensor.domo_etage`, `sensor.domo_ext_rieur`, `input_boolean.etat_ventilation`.
+All credentials live in `include/secrets.h`, which is **gitignored and must be created locally** (it has never been committed): WiFi SSID/password and Home Assistant host + long-lived access token. Home Assistant entity IDs are hardcoded in `src/weather-service.cpp`: `sensor.domo_etage`, `sensor.domo_ext_rieur`, `input_boolean.etat_ventilation`, `climate.thermostat`.
 
 ### Hardware pin assignments
 
