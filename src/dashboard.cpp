@@ -16,7 +16,9 @@ int Dashboard::tempToY(float temp, float tMin, float tMax) {
   return bottomY - (int)(ratio * (bottomY - topY));
 }
 
-static uint16_t tempToColor(float temp, bool isInterior) {
+struct RGBf { float r, g, b; };
+
+static RGBf tempToRGB(float temp, bool isInterior) {
   float coldStart, coldEnd, hotStart, hotEnd;
   if (isInterior) {
     coldStart = 16.0f; coldEnd = 19.0f;
@@ -25,34 +27,55 @@ static uint16_t tempToColor(float temp, bool isInterior) {
     coldStart = 12.0f; coldEnd = 15.0f;
     hotStart  = 27.0f; hotEnd  = 30.0f;
   }
-  uint8_t r, g, b;
   if (temp <= coldStart) {
-    r = 0; g = 0; b = 255;
+    return {0, 0, 255};
   } else if (temp < coldEnd) {
     float t = (temp - coldStart) / (coldEnd - coldStart);
-    r = (uint8_t)(t * 255); g = (uint8_t)(t * 255); b = 255;
+    return {t * 255, t * 255, 255};
   } else if (temp <= hotStart) {
-    r = 255; g = 255; b = 255;
+    return {255, 255, 255};
   } else if (temp < hotEnd) {
     float t = (temp - hotStart) / (hotEnd - hotStart);
-    r = 255; g = (uint8_t)((1.0f - t) * 255); b = (uint8_t)((1.0f - t) * 255);
+    return {255, (1.0f - t) * 255, (1.0f - t) * 255};
   } else {
-    r = 255; g = 0; b = 0;
+    return {255, 0, 0};
   }
-  return rgb565(r, g, b);
+}
+
+static uint16_t tempToColor(float temp, bool isInterior) {
+  RGBf c = tempToRGB(temp, isInterior);
+  return rgb565((uint8_t)c.r, (uint8_t)c.g, (uint8_t)c.b);
+}
+
+// Le remplissage est tres attenue (1/7) : en RGB565 il ne reste alors que
+// 5 niveaux en rouge/bleu, d'ou des bandes. Tramage ordonne Bayer 4x4 : chaque
+// pixel arrondit vers le haut ou le bas selon sa position, ce qui restitue les
+// niveaux intermediaires a l'oeil.
+static const uint8_t BAYER4[4][4] = {
+  { 0,  8,  2, 10},
+  {12,  4, 14,  6},
+  { 3, 11,  1,  9},
+  {15,  7, 13,  5},
+};
+
+static uint16_t ditherTo565(RGBf c, int x, int y) {
+  float threshold = (BAYER4[y & 3][x & 3] + 0.5f) / 16.0f;
+  auto q = [&](float v, int maxLevel) {
+    float lv = v * maxLevel / 255.0f;
+    int   i  = (int)lv;
+    if (lv - i > threshold) i++;
+    return min(i, maxLevel);
+  };
+  // Vert quantifie sur 5 bits comme rouge et bleu : sinon, sur les teintes ou
+  // r == g, les deux canaux n'arrondissent pas pareil et des points roses
+  // apparaissent.
+  return (uint16_t)((q(c.r, 31) << 11) | ((q(c.g, 31) << 1) << 5) | q(c.b, 31));
 }
 
 static uint16_t dimColor565(uint16_t c, int div) {
   uint8_t r = ((c >> 11) & 0x1F) / div;
   uint8_t g = ((c >> 5)  & 0x3F) / div;
   uint8_t b = (c          & 0x1F) / div;
-  return (uint16_t)((r << 11) | (g << 5) | b);
-}
-
-static uint16_t addColors565(uint16_t c1, uint16_t c2) {
-  uint8_t r = min(31, ((c1 >> 11) & 0x1F) + ((c2 >> 11) & 0x1F));
-  uint8_t g = min(63, ((c1 >> 5)  & 0x3F) + ((c2 >> 5)  & 0x3F));
-  uint8_t b = min(31, (c1         & 0x1F) + (c2         & 0x1F));
   return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
@@ -97,14 +120,15 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
   // Précalcul : couleur par ligne Y selon la température que cette hauteur représente
   const int curveTopY    = CURVE_PAD;
   const int curveBottomY = SCREEN_HEIGHT - 1 - CURVE_PAD;
-  uint16_t colorEtageAtY[SCREEN_HEIGHT] = {};
-  uint16_t colorExtAtY[SCREEN_HEIGHT]   = {};
+  // (en flottant : l'attenuation se fait avant la quantification 565)
+  RGBf colorEtageAtY[SCREEN_HEIGHT] = {};
+  RGBf colorExtAtY[SCREEN_HEIGHT]   = {};
   if (tMax > tMin) {
     for (int y = CURVE_PAD; y <= bottomY; y++) {
       float ratio  = (float)(curveBottomY - y) / (float)(curveBottomY - curveTopY);
       float tempAtY = tMin + ratio * (tMax - tMin);
-      colorEtageAtY[y] = tempToColor(tempAtY, true);
-      colorExtAtY[y]   = tempToColor(tempAtY, false);
+      colorEtageAtY[y] = tempToRGB(tempAtY, true);
+      colorExtAtY[y]   = tempToRGB(tempAtY, false);
     }
   }
 
@@ -120,15 +144,23 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       bool inExt   = hasExt   && y > yExt;
       if (!inEtage && !inExt) continue;
 
-      int div = isGridLine[y] ? 3 : 7;
-      uint16_t ce = dimColor565(colorEtageAtY[y], div);
-      uint16_t cx = dimColor565(colorExtAtY[y],   div);
-
-      if (heating && inEtage) ce = addColors565(ce, Colors::HEAT_TINT);
-
-      if      (inEtage && inExt) disp->drawPixel(x, y, addColors565(ce, cx));
-      else if (inEtage)          disp->drawPixel(x, y, ce);
-      else                       disp->drawPixel(x, y, cx);
+      // Ligne des dizaines en tirets : 5 pixels allumes, 2 eteints
+      bool gridDot = isGridLine[y] && (x % 7 < 5);
+      float div = gridDot ? 3.0f : 7.0f;
+      RGBf c = {0, 0, 0};
+      if (inEtage) {
+        c.r += colorEtageAtY[y].r / div;
+        c.g += colorEtageAtY[y].g / div;
+        c.b += colorEtageAtY[y].b / div;
+        if (heating) c.r += Colors::HEAT_TINT_R;
+      }
+      if (inExt) {
+        c.r += colorExtAtY[y].r / div;
+        c.g += colorExtAtY[y].g / div;
+        c.b += colorExtAtY[y].b / div;
+      }
+      c.r = min(c.r, 255.0f); c.g = min(c.g, 255.0f); c.b = min(c.b, 255.0f);
+      disp->drawPixel(x, y, ditherTo565(c, x, y));
     }
   }
 }

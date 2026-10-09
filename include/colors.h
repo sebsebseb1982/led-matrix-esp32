@@ -21,7 +21,8 @@ namespace Colors {
   constexpr uint16_t CLOCK_HAND = rgb565(255, 180, 0);
   // Voile rouge additionne au remplissage sous la courbe etage pendant la
   // chauffe : assez faible pour laisser voir le degrade et la zone exterieure.
-  constexpr uint16_t HEAT_TINT  = rgb565(90, 0, 0);
+  // (composante rouge 0-255 seule : le remplissage est calcule en flottant)
+  constexpr float    HEAT_TINT_R = 90.0f;
 }
 
 #endif
