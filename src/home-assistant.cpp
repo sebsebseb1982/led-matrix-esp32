@@ -15,8 +15,8 @@
 // Changer le fuseau dans configTime decalerait toutes les series.
 
 static String getTimestamp(long hoursBack) {
-  long now = time(NULL);
-  long then = now - (hoursBack * 3600L);
+  time_t now = time(NULL);
+  time_t then = now - (time_t)hoursBack * 3600;
 
   struct tm* tm_info = gmtime(&then);
   char buffer[32];

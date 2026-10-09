@@ -289,13 +289,16 @@ void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
                  ? tempToY(extTemps[xPos], tMin, tMax)
                  : SCREEN_HEIGHT / 2;
 
-    int iconX = max(0, min(SCREEN_WIDTH - 4, xPos - 2));
-    int iconY = max(0, min(SCREEN_HEIGHT - 4, curveY - 2));
+    // Icone 4x4 + contour noir d'1px : on la garde a 1px des bords pour que le contour reste visible
+    int iconX = max(1, min(SCREEN_WIDTH - 5, xPos - 2));
+    int iconY = max(1, min(SCREEN_HEIGHT - 5, curveY - 2));
 
-    if (isSun)
-      drawSun(disp, iconX, iconY, Colors::SUN);
-    else
-      drawMoon(disp, iconX, iconY, Colors::MOON);
+    drawWithOutline([&](int dx, int dy, uint16_t c) {
+      if (isSun)
+        drawSun(disp, iconX + dx, iconY + dy, c);
+      else
+        drawMoon(disp, iconX + dx, iconY + dy, c);
+    }, isSun ? Colors::SUN : Colors::MOON, Colors::BLACK);
   };
 
   placeIcon(WeatherService::sunriseX, true);

@@ -1,19 +1,19 @@
 #include "buzzer.h"
 
-#define pwmChannel 0    // Canal LEDC 0
 #define frequence 2000  // Frequence PWM de 2 kHz
 #define resolution 8    // Resolution de 8 bits, 256 valeurs possibles
 
 #define BUZZER_PIN 18
 
 void Buzzer::setup() {
-  ledcSetup(pwmChannel, frequence, resolution);
-  ledcAttachPin(BUZZER_PIN, pwmChannel);
+  // API LEDC du core Arduino-ESP32 3.x : le canal est alloue automatiquement
+  // et on adresse ensuite le PWM par la broche.
+  ledcAttach(BUZZER_PIN, frequence, resolution);
   off();
 }
 
-void Buzzer::on()  { ledcWrite(pwmChannel, 255); }
-void Buzzer::off() { ledcWrite(pwmChannel, 0); }
+void Buzzer::on()  { ledcWrite(BUZZER_PIN, 255); }
+void Buzzer::off() { ledcWrite(BUZZER_PIN, 0); }
 
 void Buzzer::beepbeepbeep(unsigned int beepDurationInMs) {
   for (int i = 0; i < 3; i++) {
