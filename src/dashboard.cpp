@@ -129,8 +129,17 @@ void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, boo
     if (isnan(temps[x]) || isnan(temps[x - 1])) continue;
     int y0 = tempToY(temps[x - 1], tMin, tMax);
     int y1 = tempToY(temps[x], tMin, tMax);
-    float avgTemp = (temps[x - 1] + temps[x]) * 0.5f;
-    disp->drawLine(x - 1, y0, x, y1, tempToColor(avgTemp, isInterior));
+    // Couleur par pixel (temperature interpolee le long du segment) : une
+    // couleur unique par segment ecrase le degrade sur les fortes pentes.
+    int dy    = y1 - y0;
+    int steps = max(1, abs(dy));
+    for (int i = 0; i <= steps; i++) {
+      float f  = (float)i / steps;
+      int px   = (f < 0.5f) ? x - 1 : x;
+      int py   = y0 + dy * i / steps;
+      float t  = temps[x - 1] + f * (temps[x] - temps[x - 1]);
+      disp->drawPixel(px, py, tempToColor(t, isInterior));
+    }
   }
 }
 
