@@ -3,6 +3,7 @@
 #include "weather-service.h"
 #include <Arduino.h>
 #include <math.h>
+#include <time.h>
 
 #define CURVE_PAD 4
 
@@ -377,6 +378,46 @@ void Dashboard::drawSolarEvents(const float* extTemps, float tMin, float tMax) {
   placeIcon(WeatherService::sunsetX,  false);
 }
 
+// Decalage de l'heure de Paris sur UTC (l'horloge systeme reste en UTC, voir
+// CLAUDE.md) : heure d'ete du dernier dimanche de mars au dernier dimanche
+// d'octobre, bascule a 01:00 UTC.
+static long parisOffsetSecs(time_t utc) {
+  struct tm t;
+  gmtime_r(&utc, &t);
+  if (t.tm_mon < 2 || t.tm_mon > 9) return 3600;
+  if (t.tm_mon > 2 && t.tm_mon < 9) return 7200;
+  int lastSunday = 31 - (t.tm_wday + 31 - t.tm_mday) % 7;  // mars et octobre ont 31 jours
+  bool afterSwitch = t.tm_mday > lastSunday || (t.tm_mday == lastSunday && t.tm_hour >= 1);
+  bool dst = (t.tm_mon == 2) ? afterSwitch : !afterSwitch;
+  return dst ? 7200 : 3600;
+}
+
+// Graduations horaires sur la derniere ligne (marge CURVE_PAD, vide sauf sous
+// l'icone ventilation) : un point toutes les 3 h en heure locale, plus vif et
+// 2 px de haut a minuit et midi. Dessinees en dernier : sous le texte du
+// croisement, la ligne du bas n'est que du contour assombri. Le second pixel
+// des reperes majeurs ne s'allume que sur du noir pour ne pas toucher au texte.
+void Dashboard::drawHourTicks() {
+  GFXcanvas16* disp = this->frame;
+  time_t now = time(nullptr);
+  if (now < 1600000000) return;  // horloge pas encore synchronisee
+
+  float windowStart = now - NOW_COL * SECS_PER_COL;
+  float windowEnd   = now + (SCREEN_WIDTH - 1 - NOW_COL) * SECS_PER_COL;
+  // Les decalages de Paris sont des heures pleines : les heures UTC pleines
+  // sont aussi des heures locales pleines.
+  for (long t = ((long)windowStart / 3600 + 1) * 3600; t <= windowEnd; t += 3600) {
+    int hour = ((t + parisOffsetSecs(t)) / 3600) % 24;
+    if (hour % 3 != 0) continue;
+    int x = (int)lroundf((t - windowStart) / SECS_PER_COL);
+    if (x < 0 || x >= SCREEN_WIDTH) continue;
+    bool major = (hour % 12 == 0);
+    disp->drawPixel(x, SCREEN_HEIGHT - 1, major ? Colors::TICK_MAJOR : Colors::TICK_MINOR);
+    if (major && disp->getPixel(x, SCREEN_HEIGHT - 2) == Colors::BLACK)
+      disp->drawPixel(x, SCREEN_HEIGHT - 2, Colors::TICK_MAJOR);
+  }
+}
+
 static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
   const int cx     = SCREEN_WIDTH  / 2;
   const int cy     = SCREEN_HEIGHT / 2;  // cadran centre sur l'ecran
@@ -447,6 +488,7 @@ void Dashboard::render() {
 
   drawCurrentValues(WeatherService::lastEtage, WeatherService::lastExt);
   drawVentilation(WeatherService::ventIsOn);
+  drawHourTicks();
 
   if (etageValid == 0 && extValid == 0) {
     this->frame->setCursor(5, 30);

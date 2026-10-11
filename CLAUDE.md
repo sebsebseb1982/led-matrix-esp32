@@ -44,7 +44,7 @@ A failed ventilation read returns `"?"` and is ignored rather than treated as "o
 
 ### Display rendering pipeline
 
-`Dashboard::loop()` → `WeatherService::refresh()` → `render()` twice (forecast curves dimmed into `frameDim`, then bright into `frameLit`): fills (dimmed area under each curve, twice as dim in the forecast zone), then line curves, then sun/moon icons, then current-value text overlay, then ventilation icon. Etage (upstairs) = blue, exterior = red.
+`Dashboard::loop()` → `WeatherService::refresh()` → `render()` twice (forecast curves dimmed into `frameDim`, then bright into `frameLit`): fills (dimmed area under each curve, twice as dim in the forecast zone), then line curves, then sun/moon icons, then current-value text overlay, then ventilation icon, then hour ticks on the bottom row (every 3 h in Paris local time, brighter and 2 px tall at midnight/noon; DST computed by hand in `parisOffsetSecs` since the system clock stays UTC). Etage (upstairs) = blue, exterior = red.
 
 X axis (`include/weather-service.h`): columns `0..NOW_COL` (47) are the last `HISTORY_HOURS` (18 h); columns after `NOW_COL` are predictions at the same scale (~6 h), with a fainter fill and a scanner animation on the curves: exterior = forecast shifted by a constant bias so it matches the last sensor reading at `NOW_COL`; etage = thermal model simulated in 5 min steps from the last reading, driven by that forecast.
 

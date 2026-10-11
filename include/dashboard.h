@@ -29,6 +29,7 @@ class Dashboard {
     void drawCurrentValues(float etageTemp, float extTemp);
     void drawVentilation(bool isOn);
     void drawSolarEvents(const float* extTemps, float tMin, float tMax);
+    void drawHourTicks();
   public:
     Dashboard(LEDPanel *ledPanel);
     void showLoading();

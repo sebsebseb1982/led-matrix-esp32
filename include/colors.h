@@ -19,6 +19,8 @@ namespace Colors {
   constexpr uint16_t SUN        = rgb565(255, 220, 0);
   constexpr uint16_t MOON       = rgb565(180, 210, 255);
   constexpr uint16_t CLOCK_HAND = rgb565(255, 180, 0);
+  constexpr uint16_t TICK_MINOR = rgb565(70, 70, 70);    // graduation toutes les 3 h
+  constexpr uint16_t TICK_MAJOR = rgb565(160, 160, 160); // minuit et midi
   // Voile rouge additionne au remplissage sous la courbe etage pendant la
   // chauffe : assez faible pour laisser voir le degrade et la zone exterieure.
   // (composante rouge 0-255 seule : le remplissage est calcule en flottant)
