@@ -2,6 +2,7 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include <string.h>
+#include <ctype.h>
 #include <math.h>
 
 #include "common.h"
@@ -24,28 +25,44 @@ static String getTimestamp(long hoursBack) {
   return String(buffer) + "Z";
 }
 
-// Parse un timestamp ISO UTC de HA en unix ts (voir la note sur le fuseau).
+// Parse un timestamp ISO de HA en unix ts (voir la note sur le fuseau).
+// L'historique est toujours en UTC, mais une integration meteo peut dater ses
+// previsions en heure locale ("+02:00") : le decalage eventuel est retranche.
 static long parseHaTimestamp(const char* s) {
   struct tm tm_info;
   memset(&tm_info, 0, sizeof(tm_info));
-  strptime(s, "%Y-%m-%dT%H:%M:%S", &tm_info);
+  const char* rest = strptime(s, "%Y-%m-%dT%H:%M:%S", &tm_info);
   tm_info.tm_isdst = -1;
-  return (long)mktime(&tm_info);
+  long ts = (long)mktime(&tm_info);
+
+  if (rest) {
+    while (*rest == '.' || isdigit((unsigned char)*rest)) rest++;  // fractions de seconde
+    if (*rest == '+' || *rest == '-') {
+      int h = 0, m = 0;
+      sscanf(rest + 1, "%d:%d", &h, &m);
+      long offset = h * 3600L + m * 60L;
+      ts -= (*rest == '+') ? offset : -offset;
+    }
+  }
+  return ts;
 }
 
-// GET sur l'API HA : URL, bearer, retry des echecs *reseau* uniquement
-// (un 401 ou un 404 ne reussira jamais, inutile de le rejouer), puis
-// deserialisation. Retourne false si quoi que ce soit echoue.
-static bool haGet(const String& path, JsonDocument& doc, const JsonDocument* filter = nullptr) {
+// Requete sur l'API HA (GET, ou POST si postBody est fourni) : URL, bearer,
+// retry des echecs *reseau* uniquement (un 401 ou un 404 ne reussira jamais,
+// inutile de le rejouer), puis deserialisation. Retourne false si quoi que ce
+// soit echoue.
+static bool haRequest(const String& path, const String* postBody,
+                      JsonDocument& doc, const JsonDocument* filter) {
   HTTPClient http;
   http.begin(String(F("http://")) + SECRET_HOME_ASSISTANT_HOST + path);
   http.useHTTP10(true);
   http.addHeader("Authorization", String(F("Bearer ")) + SECRET_HOME_ASSISTANT_TOKEN);
+  if (postBody) http.addHeader("Content-Type", "application/json");
 
   int httpCode;
   int retry = 0;
   do {
-    httpCode = http.GET();
+    httpCode = postBody ? http.POST(*postBody) : http.GET();
   } while (httpCode <= 0 && ++retry < HTTP_RETRY);
 
   if (httpCode != 200) {
@@ -64,6 +81,10 @@ static bool haGet(const String& path, JsonDocument& doc, const JsonDocument* fil
     return false;
   }
   return true;
+}
+
+static bool haGet(const String& path, JsonDocument& doc, const JsonDocument* filter = nullptr) {
+  return haRequest(path, nullptr, doc, filter);
 }
 
 // Filtre ArduinoJson commun aux appels /history : ne garde que state et
@@ -107,7 +128,9 @@ String HomeAssistant::getEntityState(const String& entityId) {
   return doc["state"].as<String>();
 }
 
-static void fetchChunk(const String& entityId, float* out, int outSize,
+// Accumule chaque point dans sa colonne (sums/cnts) : la moyenne est faite par
+// getTimeSeries une fois tous les chunks lus.
+static void fetchChunk(const String& entityId, float* sums, int* cnts, int outSize,
                        long startHoursBack, long endHoursBack,
                        long globalStartTs, long totalSeconds) {
   JsonDocument filter;
@@ -143,7 +166,8 @@ static void fetchChunk(const String& entityId, float* out, int outSize,
     if (offset > totalSeconds) offset = totalSeconds;
 
     int idx = (int)((offset / (float)totalSeconds) * (outSize - 1));
-    out[idx] = atof(stateStr);
+    sums[idx] += atof(stateStr);
+    cnts[idx]++;
   }
 }
 
@@ -221,7 +245,25 @@ bool HomeAssistant::getSunTimes(time_t& nextRising, time_t& nextSetting) {
   return true;
 }
 
-int HomeAssistant::getHeatingColumns(const String& entityId, long hoursBack, bool* out, int outSize) {
+bool HomeAssistant::getClimateState(const String& entityId, bool& heatMode, float& setpoint) {
+  JsonDocument filter;
+  filter["state"] = true;
+  filter["attributes"]["temperature"] = true;
+
+  JsonDocument doc;
+  if (!haGet(String(F("/api/states/")) + entityId, doc, &filter)) return false;
+
+  const char* state = doc["state"];
+  if (!state || !doc["attributes"]["temperature"].is<float>()) return false;
+
+  heatMode = strcmp(state, "heat") == 0;
+  setpoint = doc["attributes"]["temperature"].as<float>();
+  Serial.printf("[ha] %s: %s, consigne %.1f\n", entityId.c_str(), state, setpoint);
+  return true;
+}
+
+int HomeAssistant::getHeatingColumns(const String& entityId, long hoursBack, bool* out, int outSize,
+                                     long chunkHours) {
   for (int i = 0; i < outSize; i++) out[i] = false;
 
   long totalSeconds  = hoursBack * 3600L;
@@ -251,11 +293,10 @@ int HomeAssistant::getHeatingColumns(const String& entityId, long hoursBack, boo
       for (int x = toCol(prevTs); x <= toCol(ts); x++) out[x] = true;
   };
 
-  // Chunks de 4 h : sans minimal_response chaque etat porte tous les attributs
-  // du PID, et le thermostat en publie un par cycle.
-  const long CHUNK_HOURS = 4;
-  for (long start = hoursBack; start > 0; start -= CHUNK_HOURS) {
-    long end = start - CHUNK_HOURS;
+  // Tranches courtes (4 h par defaut) : sans minimal_response chaque etat porte
+  // tous les attributs du PID, et le thermostat en publie un par cycle.
+  for (long start = hoursBack; start > 0; start -= chunkHours) {
+    long end = start - chunkHours;
     if (end < 0) end = 0;
 
     JsonDocument doc;
@@ -286,23 +327,32 @@ int HomeAssistant::getHeatingColumns(const String& entityId, long hoursBack, boo
   return heatingCount;
 }
 
-int HomeAssistant::getTimeSeries(const String& entityId, long hoursBack, float* out, int outSize) {
+int HomeAssistant::getTimeSeries(const String& entityId, long hoursBack, float* out, int outSize,
+                                 long chunkHours) {
   Serial.printf("[ha] getTimeSeries(%s, %ldh, %d)\n", entityId.c_str(), hoursBack, outSize);
 
-  for (int i = 0; i < outSize; i++) out[i] = NAN;
+  // Moyenne par colonne plutot que dernier point recu : avec un seul point
+  // retenu, le bruit du capteur fait zigzaguer la courbe d'une colonne a
+  // l'autre, et le trace de ces zigzags donne deux traits cote a cote.
+  float sums[outSize];
+  int   cnts[outSize];
+  memset(sums, 0, outSize * sizeof(float));
+  memset(cnts, 0, outSize * sizeof(int));
 
   long now = time(NULL);
   long globalStartTs = now - hoursBack * 3600L;
   long totalSeconds  = hoursBack * 3600L;
 
-  const long CHUNK_HOURS = 4;
 
-  for (long start = hoursBack; start > 0; start -= CHUNK_HOURS) {
-    long end = start - CHUNK_HOURS;
+  for (long start = hoursBack; start > 0; start -= chunkHours) {
+    long end = start - chunkHours;
     if (end < 0) end = 0;
-    fetchChunk(entityId, out, outSize, start, end, globalStartTs, totalSeconds);
+    fetchChunk(entityId, sums, cnts, outSize, start, end, globalStartTs, totalSeconds);
     delay(100);
   }
+
+  for (int i = 0; i < outSize; i++)
+    out[i] = cnts[i] > 0 ? sums[i] / cnts[i] : NAN;
 
   int validCount = 0;
   for (int i = 0; i < outSize; i++)
@@ -310,4 +360,33 @@ int HomeAssistant::getTimeSeries(const String& entityId, long hoursBack, float* 
 
   Serial.printf("[ha] %s: %d/%d cases renseignees\n", entityId.c_str(), validCount, outSize);
   return validCount;
+}
+
+int HomeAssistant::getHourlyForecast(const String& entityId, long* timestamps, float* temps, int maxPoints) {
+  // Les previsions ne sont plus des attributs de l'entite : il faut appeler le
+  // service weather.get_forecasts, qui renvoie sa reponse avec ?return_response.
+  JsonDocument filter;
+  JsonObject item = filter["service_response"][entityId]["forecast"][0].to<JsonObject>();
+  item["datetime"]    = true;
+  item["temperature"] = true;
+
+  String body = String(F("{\"entity_id\":\"")) + entityId + F("\",\"type\":\"hourly\"}");
+
+  JsonDocument doc;
+  if (!haRequest(F("/api/services/weather/get_forecasts?return_response"), &body, doc, &filter))
+    return 0;
+
+  JsonArray forecast = doc["service_response"][entityId]["forecast"];
+  int n = 0;
+  for (JsonObject point : forecast) {
+    if (n >= maxPoints) break;
+    const char* tsStr = point["datetime"];
+    if (!tsStr || !point["temperature"].is<float>()) continue;
+    timestamps[n] = parseHaTimestamp(tsStr);
+    temps[n]      = point["temperature"].as<float>();
+    n++;
+  }
+
+  Serial.printf("[ha] %s: %d points de prevision\n", entityId.c_str(), n);
+  return n;
 }

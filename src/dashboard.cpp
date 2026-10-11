@@ -6,6 +6,13 @@
 
 #define CURVE_PAD 4
 
+// Balayage facon K2000 des courbes prevues, de gauche a droite (voir animate()).
+#define SCAN_DIM      3    // attenuation de la courbe hors du faisceau
+#define SCAN_TAIL     5.0f // longueur de la trainee, en colonnes
+#define SCAN_COL_MS   45   // vitesse de la tete : 16 colonnes en ~0,7 s
+#define SCAN_PAUSE_MS 600  // courbe au repos entre deux passages
+#define SCAN_FRAME_MS 20
+
 int Dashboard::tempToY(float temp, float tMin, float tMax) {
   float range = tMax - tMin;
   float ratio = (range == 0.0f) ? 0.5f : (temp - tMin) / range;
@@ -147,6 +154,7 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
       // Ligne des dizaines en tirets : 5 pixels allumes, 2 eteints
       bool gridDot = isGridLine[y] && (x % 7 < 5);
       float div = gridDot ? 3.0f : 7.0f;
+      if (x > NOW_COL) div *= 2.0f;  // prevision : remplissage plus discret
       RGBf c = {0, 0, 0};
       if (inEtage) {
         c.r += colorEtageAtY[y].r / div;
@@ -167,6 +175,8 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
 
 void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, bool isInterior) {
   GFXcanvas16* disp = this->frame;
+  // Prevision : vive ou attenuee selon la passe de rendu. Lors de la passe
+  // vive, chaque pixel est memorise pour le balayage (voir animate()).
   for (int x = 1; x < n; x++) {
     if (isnan(temps[x]) || isnan(temps[x - 1])) continue;
     int y0 = tempToY(temps[x - 1], tMin, tMax);
@@ -180,7 +190,16 @@ void Dashboard::drawCurve(const float* temps, int n, float tMin, float tMax, boo
       int px   = (f < 0.5f) ? x - 1 : x;
       int py   = y0 + dy * i / steps;
       float t  = temps[x - 1] + f * (temps[x] - temps[x - 1]);
-      disp->drawPixel(px, py, tempToColor(t, isInterior));
+      uint16_t color = tempToColor(t, isInterior);
+      if (px > NOW_COL) {
+        if (this->forecastBright) {
+          if (this->scanCount < SCAN_MAX_PX)
+            this->scan[this->scanCount++] = { (uint8_t)px, (uint8_t)py };
+        } else {
+          color = dimColor565(color, SCAN_DIM);
+        }
+      }
+      disp->drawPixel(px, py, color);
     }
   }
 }
@@ -386,8 +405,10 @@ static void drawLoadingIcon(MatrixPanel_I2S_DMA* disp) {
 }
 
 Dashboard::Dashboard(LEDPanel *ledPanel) {
-  this->ledPanel = ledPanel;
-  this->frame    = new GFXcanvas16(SCREEN_WIDTH, SCREEN_HEIGHT);
+  this->ledPanel   = ledPanel;
+  this->frameDim   = new GFXcanvas16(SCREEN_WIDTH, SCREEN_HEIGHT);
+  this->frameLit   = new GFXcanvas16(SCREEN_WIDTH, SCREEN_HEIGHT);
+  this->frame      = this->frameLit;
 }
 
 void Dashboard::showLoading() {
@@ -396,11 +417,7 @@ void Dashboard::showLoading() {
   drawLoadingIcon(this->ledPanel->dma_display);
 }
 
-void Dashboard::loop() {
-  Serial.println("[dash] === BOUCLE ===");
-
-  WeatherService::refresh();
-
+void Dashboard::render() {
   this->frame->fillScreen(Colors::BLACK);
 
   const float* etageTemps = WeatherService::etageTemps;
@@ -419,7 +436,6 @@ void Dashboard::loop() {
       if (isnan(tMax) || extTemps[i] > tMax) tMax = extTemps[i];
     }
   }
-  Serial.printf("[dash] plage auto: tMin=%.1f tMax=%.1f\n", tMin, tMax);
 
   if (etageValid > 0 || extValid > 0)
     drawFills(etageTemps, extTemps, SCREEN_WIDTH, tMin, tMax);
@@ -437,8 +453,68 @@ void Dashboard::loop() {
     this->frame->setTextColor(Colors::LIGHT_GREY);
     this->frame->print("Pas de donnees");
   }
+}
 
-  this->ledPanel->dma_display->drawRGBBitmap(0, 0, this->frame->getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT);
+void Dashboard::loop() {
+  Serial.println("[dash] === BOUCLE ===");
+
+  WeatherService::refresh();
+
+  // Deux rendus complets, prevision attenuee puis vive : animate() n'a plus
+  // qu'a recopier, pixel par pixel, l'un ou l'autre. Comme textes et icones
+  // sont dessines par-dessus dans les deux, la ou ils recouvrent la courbe
+  // les deux images sont identiques et le balayage s'efface de lui-meme.
+  this->frame = this->frameDim;
+  this->forecastBright = false;
+  render();
+
+  this->frame = this->frameLit;
+  this->forecastBright = true;
+  this->scanCount = 0;
+  render();
+  Serial.printf("[dash] balayage: %d pixels\n", this->scanCount);
+
+  this->ledPanel->dma_display->drawRGBBitmap(0, 0, this->frameDim->getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT);
+  this->lastScanMs = 0;  // premiere image du balayage sans attendre
 
   Serial.println("[dash] == FIN BOUCLE ==");
+}
+
+// Melange canal par canal en RGB565 : k = 0 -> a, k = 1 -> b.
+static uint16_t lerp565(uint16_t a, uint16_t b, float k) {
+  auto mix = [&](int shift, int mask) {
+    int ca = (a >> shift) & mask, cb = (b >> shift) & mask;
+    return (uint16_t)((int)lroundf(ca + k * (cb - ca)) << shift);
+  };
+  return mix(11, 0x1F) | mix(5, 0x3F) | mix(0, 0x1F);
+}
+
+// Balayage facon K2000, de gauche a droite seulement : une tete vive traverse
+// la prevision suivie d'une trainee qui s'estompe sur SCAN_TAIL colonnes, puis
+// repart de NOW_COL apres une pause. Chaque pixel de courbe est un melange de
+// sa version attenuee et de sa version vive selon sa distance a la tete.
+// A appeler aussi souvent que possible ; fige pendant les requetes HA de loop().
+void Dashboard::animate() {
+  if (this->scanCount == 0) return;
+  unsigned long now = millis();
+  if (this->lastScanMs != 0 && now - this->lastScanMs < SCAN_FRAME_MS) return;
+  this->lastScanMs = now;
+
+  // La tete va jusqu'a la derniere colonne + la trainee, pour que celle-ci
+  // sorte entierement de l'ecran avant la pause.
+  const float travelCols = (SCREEN_WIDTH - 1 - NOW_COL) + SCAN_TAIL;
+  const unsigned long cycleMs = (unsigned long)(travelCols * SCAN_COL_MS) + SCAN_PAUSE_MS;
+  float head = NOW_COL + 1 + (float)(now % cycleMs) / SCAN_COL_MS;
+
+  MatrixPanel_I2S_DMA* dma = this->ledPanel->dma_display;
+  for (int i = 0; i < this->scanCount; i++) {
+    const ScanPixel& p = this->scan[i];
+    float d = head - p.x;  // > 0 : la tete est deja passee
+    float k = 0.0f;
+    if (d >= 0.0f && d < 1.0f)                 k = 1.0f;
+    else if (d >= 1.0f && d < 1.0f + SCAN_TAIL) k = 1.0f - (d - 1.0f) / SCAN_TAIL;
+    uint16_t dim = this->frameDim->getPixel(p.x, p.y);
+    uint16_t lit = this->frameLit->getPixel(p.x, p.y);
+    dma->drawPixel(p.x, p.y, k <= 0.0f ? dim : lerp565(dim, lit, k));
+  }
 }

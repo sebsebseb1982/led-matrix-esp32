@@ -64,4 +64,6 @@ void loop() {
     // ferait repartir un cycle immediatement des qu'il depasse l'intervalle.
     lastRefresh = millis();
   }
+
+  dashboard.animate();
 }
