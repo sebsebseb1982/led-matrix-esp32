@@ -15,6 +15,7 @@ Dashboard dashboard(&ledPanel);
 Brightness brightness(&ledPanel);
 
 #define REFRESH_INTERVAL_MS  10000UL
+#define BRIGHTNESS_INTERVAL_MS 1000UL
 #define SLEEP_TIMEOUT_MS     180000UL  // 3 minutes d'inactivité PIR
 // Le refresh tournait jusqu'ici dans loopTask (8 Ko de pile) : meme marge, plus un peu.
 #define REFRESH_TASK_STACK   12288
@@ -91,7 +92,7 @@ void loop() {
     xSemaphoreGive(dataMutex);
   }
 
-  if (now - lastBrightness >= REFRESH_INTERVAL_MS) {
+  if (now - lastBrightness >= BRIGHTNESS_INTERVAL_MS) {
     brightness.loop();
     lastBrightness = now;
   }
