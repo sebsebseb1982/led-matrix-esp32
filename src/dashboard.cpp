@@ -497,10 +497,9 @@ void Dashboard::render() {
   }
 }
 
-void Dashboard::loop() {
-  Serial.println("[dash] === BOUCLE ===");
-
-  WeatherService::refresh();
+// Appelee par main.cpp a la fin de chaque refresh, verrou des donnees tenu.
+void Dashboard::update() {
+  Serial.println("[dash] === RENDU ===");
 
   // Deux rendus complets, prevision attenuee puis vive : animate() n'a plus
   // qu'a recopier, pixel par pixel, l'un ou l'autre. Comme textes et icones
@@ -519,7 +518,7 @@ void Dashboard::loop() {
   this->ledPanel->dma_display->drawRGBBitmap(0, 0, this->frameDim->getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT);
   this->lastScanMs = 0;  // premiere image du balayage sans attendre
 
-  Serial.println("[dash] == FIN BOUCLE ==");
+  Serial.println("[dash] == FIN RENDU ==");
 }
 
 // Melange canal par canal en RGB565 : k = 0 -> a, k = 1 -> b.
@@ -535,7 +534,8 @@ static uint16_t lerp565(uint16_t a, uint16_t b, float k) {
 // la prevision suivie d'une trainee qui s'estompe sur SCAN_TAIL colonnes, puis
 // repart de NOW_COL apres une pause. Chaque pixel de courbe est un melange de
 // sa version attenuee et de sa version vive selon sa distance a la tete.
-// A appeler aussi souvent que possible ; fige pendant les requetes HA de loop().
+// A appeler aussi souvent que possible (les requetes HA tournent dans une
+// autre tache, voir main.cpp).
 void Dashboard::animate() {
   if (this->scanCount == 0) return;
   unsigned long now = millis();

@@ -21,7 +21,7 @@ The firmware runs on an ESP32 driving a 64×64 HUB75 RGB LED matrix panel (FM612
 
 | File | Role |
 |---|---|
-| `src/main.cpp` | Entry point: wires up components, 10s refresh loop, deep sleep after 3min of PIR inactivity |
+| `src/main.cpp` | Entry point: wires up components, runs `WeatherService::refresh()` every 10 s in a FreeRTOS task on core 0 (`ha-refresh`, guarded by `dataMutex`) so `loop()` on core 1 keeps animating; re-renders when a refresh completes; deep sleep after 3min of PIR inactivity |
 | `src/led-panel.cpp` | Wraps `MatrixPanel_I2S_DMA`; handles standby/wakeup via PIR |
 | `src/dashboard.cpp` | Renders temperature curves, current value overlay, ventilation icon |
 | `src/weather-service.cpp` | Fetches HA data into static float arrays; interpolates gaps; uses `RTC_DATA_ATTR` to persist ventilation state across deep sleeps |
@@ -44,11 +44,11 @@ A failed ventilation read returns `"?"` and is ignored rather than treated as "o
 
 ### Display rendering pipeline
 
-`Dashboard::loop()` → `WeatherService::refresh()` → `render()` twice (forecast curves dimmed into `frameDim`, then bright into `frameLit`): fills (dimmed area under each curve, twice as dim in the forecast zone), then line curves, then sun/moon icons, then current-value text overlay, then ventilation icon, then hour ticks on the bottom row (every 3 h in Paris local time, brighter and 2 px tall at midnight/noon; DST computed by hand in `parisOffsetSecs` since the system clock stays UTC). Etage (upstairs) = blue, exterior = red.
+`Dashboard::update()` (called by `main.cpp` after each refresh, data mutex held) → `render()` twice (forecast curves dimmed into `frameDim`, then bright into `frameLit`): fills (dimmed area under each curve, twice as dim in the forecast zone), then line curves, then sun/moon icons, then current-value text overlay, then ventilation icon, then hour ticks on the bottom row (every 3 h in Paris local time, brighter and 2 px tall at midnight/noon; DST computed by hand in `parisOffsetSecs` since the system clock stays UTC). Etage (upstairs) = blue, exterior = red.
 
 X axis (`include/weather-service.h`): columns `0..NOW_COL` (47) are the last `HISTORY_HOURS` (18 h); columns after `NOW_COL` are predictions at the same scale (~6 h), with a fainter fill and a scanner animation on the curves: exterior = forecast shifted by a constant bias so it matches the last sensor reading at `NOW_COL`; etage = thermal model simulated in 5 min steps from the last reading, driven by that forecast.
 
-Scanner (K2000-style, left to right only): `Dashboard::animate()` runs on every `main.cpp` loop iteration and, every `SCAN_FRAME_MS`, redraws each recorded forecast-curve pixel as a blend of its `frameDim` and `frameLit` colors, based on its distance to a head sweeping from `NOW_COL` to the right edge (bright head, `SCAN_TAIL`-column fading trail, then `SCAN_PAUSE_MS` pause). Overlays are drawn in both frames, so where they cover the curve both frames match and nothing changes. The animation freezes while `loop()` blocks on HA requests.
+Scanner (K2000-style, left to right only): `Dashboard::animate()` runs on every `main.cpp` loop iteration and, every `SCAN_FRAME_MS`, redraws each recorded forecast-curve pixel as a blend of its `frameDim` and `frameLit` colors, based on its distance to a head sweeping from `NOW_COL` to the right edge (bright head, `SCAN_TAIL`-column fading trail, then `SCAN_PAUSE_MS` pause). Overlays are drawn in both frames, so where they cover the curve both frames match and nothing changes.
 
 ### Time zone
 

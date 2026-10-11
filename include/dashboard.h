@@ -33,7 +33,7 @@ class Dashboard {
   public:
     Dashboard(LEDPanel *ledPanel);
     void showLoading();
-    void loop();
+    void update();
     void animate();
 };
 
