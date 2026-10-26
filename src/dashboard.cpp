@@ -111,16 +111,14 @@ void Dashboard::drawFills(const float* etageTemps, const float* extTemps,
                            int n, float tMin, float tMax) {
   int bottomY = SCREEN_HEIGHT - 1;
 
+  // Memes reperes que tempToY, et seulement les dizaines comprises dans la
+  // plage affichee : sinon la ligne d'une dizaine hors plage se retrouve
+  // ecrasee sur la derniere ligne de l'ecran.
   bool isGridLine[SCREEN_HEIGHT] = {};
   if (!isnan(tMin) && !isnan(tMax) && tMax > tMin) {
-    int firstTemp = (int)floorf(tMin / 10.0f) * 10;
-    int lastTemp  = (int)ceilf(tMax / 10.0f) * 10;
-    for (int temp = firstTemp; temp <= lastTemp; temp += 10) {
-      float ratio = (temp - tMin) / (tMax - tMin);
-      int y = bottomY - (int)(ratio * (bottomY - CURVE_PAD));
-      if (y >= CURVE_PAD && y <= bottomY)
-        isGridLine[y] = true;
-    }
+    int firstTemp = (int)ceilf(tMin / 10.0f) * 10;
+    for (int temp = firstTemp; temp <= tMax; temp += 10)
+      isGridLine[tempToY((float)temp, tMin, tMax)] = true;
   }
 
   GFXcanvas16* disp = this->frame;
